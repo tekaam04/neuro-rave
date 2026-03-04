@@ -1,5 +1,7 @@
+import os
+
 ### Streaming
-HOST = "127.0.0.1"
+HOST = os.environ.get("BIOSEMI_HOST", "127.0.0.1")
 PORT = 778
 
 ### Signal Processing
