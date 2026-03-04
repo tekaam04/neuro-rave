@@ -1,4 +1,5 @@
 import socket
+import threading
 import numpy as np
 from pylsl import StreamInfo, StreamOutlet, StreamInlet, resolve_stream
 
@@ -13,17 +14,24 @@ class TCPSource:
         self.socket.connect((self.host, self.port))
         print(f"Connected to TCP source at {self.host}:{self.port}")
 
-    def recv(self, n_bytes):
-        return self.socket.recv(n_bytes)
+    def recv_exact(self, n_bytes):
+        buf = b''
+        while len(buf) < n_bytes:
+            chunk = self.socket.recv(n_bytes - len(buf))
+            if not chunk:
+                raise ConnectionError("TCP connection closed")
+            buf += chunk
+        return buf
 
 class BioSemi24BitDecoder:
-    def __init__(self, n_channels):
+    def __init__(self, n_channels, dtype=np.float32):
         self.n_channels = n_channels
         self.bytes_per_sample = 3
         self.sample_block_size = n_channels * self.bytes_per_sample
+        self.dtype = dtype
 
     def decode_block(self, raw_block):
-        sample = np.empty(self.n_channels, dtype=np.float32)
+        sample = np.empty(self.n_channels, dtype=self.dtype)
 
         for ch in range(self.n_channels):
             start = ch * 3
@@ -59,3 +67,27 @@ class LSLConsumer:
 
     def get_chunk(self, max_samples=512):
         return self._inlet.pull_chunk(max_samples=max_samples)
+    
+def _stream_loop(tcpsource, decoder, lslpub):
+    tcpsource.connect()
+
+    while True:
+        raw_block = tcpsource.recv_exact(decoder.sample_block_size)
+        sample = decoder.decode_block(raw_block)
+        lslpub.push_sample(sample)
+
+
+class LSLBridge:
+    def __init__(self, tcp, decoder, publisher):
+        self.tcp = tcp
+        self.decoder = decoder
+        self.publisher = publisher
+        self._thread = None
+
+    def start(self):
+        self._thread = threading.Thread(
+            target=_stream_loop,
+            args=(self.tcp, self.decoder, self.publisher),
+            daemon=True
+        )
+        self._thread.start()

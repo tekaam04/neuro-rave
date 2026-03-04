@@ -16,10 +16,16 @@ class Buffer(ABC):
         self.size = size
         self.n_channels = n_channels
         self.dtype = dtype
+        self.full = False
 
     @abstractmethod
     def add_sample(self, sample):
         pass
+
+    def add_chunk(self, chunk):
+        chunk = np.asarray(chunk, dtype=self.dtype)
+        for sample in chunk:
+            self.add_sample(sample)
 
     @property
     @abstractmethod
@@ -31,7 +37,6 @@ class CircularBuffer(Buffer):
         super().__init__(size, n_channels, dtype)
         self._data = np.zeros((size, n_channels), dtype=dtype)
         self._index = 0
-        self._full = False
 
     def add_sample(self, sample):
         sample = np.asarray(sample, dtype=self.dtype)
@@ -43,15 +48,38 @@ class CircularBuffer(Buffer):
         self._index = (self._index + 1) % self.size
 
         if self._index == 0:
-            self._full = True
+            self.full = True
+
+    def add_chunk(self, chunk):
+        chunk = np.asarray(chunk, dtype=self.dtype)
+        n = len(chunk)
+
+        if n >= self.size:
+            chunk = chunk[-self.size:]
+            self._data[:] = chunk
+            self._index = 0
+            self.full = True
+            return
+
+        end = self._index + n
+        if end <= self.size:
+            self._data[self._index:end] = chunk
+        else:
+            first = self.size - self._index
+            self._data[self._index:self.size] = chunk[:first]
+            self._data[:end - self.size] = chunk[first:]
+
+        self._index = end % self.size
+        if end >= self.size:
+            self.full = True
 
     @property
     def data(self):
         # Not yet full → simple slice (O(1))
-        if not self._full:
+        if not self.full:
             return self._data[:self._index]
 
-        # Wrapped → must re-order (O(n))
+        # Wrapped → must re-order (O(size))
         return np.concatenate(
             (self._data[self._index:], self._data[:self._index]),
             axis=0
@@ -59,7 +87,7 @@ class CircularBuffer(Buffer):
 
     @property
     def shape(self):
-        if not self._full:
+        if not self.full:
             return (self._index, self.n_channels)
         return (self.size, self.n_channels)
 
@@ -69,12 +97,11 @@ class CircularBuffer(Buffer):
     def __getitem__(self, item):
         return self.data[item]
     
-class DoubleCircularBuffer(Buffer):
+class MirrorCircleBuffer(Buffer):
     def __init__(self, size, n_channels, dtype=np.float32):
         super().__init__(size, n_channels, dtype)
         self._data = np.zeros((size * 2, n_channels), dtype=dtype)
         self._index = 0
-        self._full = False
 
     def add_sample(self, sample):
         sample = np.asarray(sample, dtype=self.dtype)
@@ -88,11 +115,39 @@ class DoubleCircularBuffer(Buffer):
         self._index = (self._index + 1) % self.size
 
         if self._index == 0:
-            self._full = True
+            self.full = True
+
+    def add_chunk(self, chunk):
+        chunk = np.asarray(chunk, dtype=self.dtype)
+        n = len(chunk)
+
+        if n >= self.size:
+            # chunk fills entire buffer — just take the last `size` samples
+            chunk = chunk[-self.size:]
+            self._data[:self.size] = chunk
+            self._data[self.size:] = chunk
+            self._index = 0
+            self.full = True
+            return
+
+        end = self._index + n
+        if end <= self.size:
+            self._data[self._index:end] = chunk
+            self._data[self._index + self.size:end + self.size] = chunk
+        else:
+            first = self.size - self._index
+            self._data[self._index:self.size] = chunk[:first]
+            self._data[self._index + self.size:self.size * 2] = chunk[:first]
+            self._data[:end - self.size] = chunk[first:]
+            self._data[self.size:end] = chunk[first:]
+
+        self._index = end % self.size
+        if end >= self.size:
+            self.full = True
 
     @property
     def data(self):
-        if not self._full:
+        if not self.full:
             return self._data[:self._index]
 
         return self._data[self._index:self._index + self.size]
