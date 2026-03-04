@@ -106,8 +106,6 @@ class DoubleCircularBuffer(Buffer):
 
     def __getitem__(self, item):
         return self.data[item]
-    
-    import scipy.signal as signal
 
 
 def apply_window(data, window_type="hann"):
