@@ -17,7 +17,7 @@ if __name__ == "__main__":
 
     consumer = LSLConsumer("EEG")
 
-    buffer = MirrorCircleBuffer(const.WINDOW_SIZE)
+    buffer = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
 
     plt.ion()
     while True:

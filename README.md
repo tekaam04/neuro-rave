@@ -25,30 +25,37 @@ BioSemi / acquisition logic ├── music-gen/ \# Music generation API logic
 Each directory represents a functional module.
 
 ------------------------------------------------------------------------
-# IGNORE DOCKER FOR NOW, NOT COMPLETELY SET UP
-# Environment Setup (Docker Required)
+# Environment Setup
 
-This project is fully containerized.
+## Docker
 
-## Build the Image
-
+```bash
 docker compose build
-
-or
-
-docker build -t neuro-rave .
-
-## Run the Application
-
 docker compose up
+```
 
-or
+To stop: `docker compose down`
 
-docker run -p 8050:8050 neuro-rave
+### Running other scripts in the container
 
-## Stop the Application
+```bash
+# Open a shell inside the running container
+docker compose exec neuro-rave bash
 
-docker compose down
+# Run a one-off script
+docker compose run --rm neuro-rave python src/streaming/tcp_test.py
+```
+
+Source files are volume-mounted, so local edits are reflected immediately without rebuilding.
+
+## Conda (local development)
+
+```bash
+conda create -n neuro-rave python=3.11 -y
+conda activate neuro-rave
+pip install -r requirements.txt
+python main.py
+```
 
 ------------------------------------------------------------------------
 
@@ -102,6 +109,41 @@ versions
 
 This ensures: - Identical environments across machines - Stable
 real-time behavior - Reproducible research
+
+------------------------------------------------------------------------
+
+# FAQ
+
+**`zsh: command not found: docker`**
+
+Docker Desktop must be running. Open it from Applications, wait for the whale icon in the menu bar. If still not found, the symlink may be broken:
+```bash
+sudo ln -sf /Applications/Docker.app/Contents/Resources/bin/docker /usr/local/bin/docker
+```
+
+**`docker-credential-desktop: executable file not found`**
+
+Remove `"credsStore": "desktop"` from `~/.docker/config.json`.
+
+**`ModuleNotFoundError: No module named 'pylsl'`**
+
+You're using the wrong Python. Activate the conda env first:
+```bash
+conda activate neuro-rave
+python main.py
+```
+
+**`ConnectionRefused` when running in Docker**
+
+The container can't reach `127.0.0.1` on your host. The `BIOSEMI_HOST` env var in `docker-compose.yml` is set to `host.docker.internal` to handle this. Make sure Docker Desktop is up to date.
+
+**Docker build fails pulling the base image**
+
+Check your internet connection and that Docker Desktop is running. If behind a proxy, configure it in Docker Desktop settings.
+
+**Changes to code not showing in container**
+
+Source files are volume-mounted. If you added a new top-level file (not under `src/`), add it to the `volumes` section in `docker-compose.yml`. Dependency changes always require `docker compose build`.
 
 ------------------------------------------------------------------------
 
