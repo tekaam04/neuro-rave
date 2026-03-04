@@ -25,7 +25,7 @@ BioSemi / acquisition logic ├── music-gen/ \# Music generation API logic
 Each directory represents a functional module.
 
 ------------------------------------------------------------------------
-
+# IGNORE DOCKER FOR NOW, NOT COMPLETELY SET UP
 # Environment Setup (Docker Required)
 
 This project is fully containerized.
