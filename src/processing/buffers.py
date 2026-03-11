@@ -9,14 +9,15 @@ def is_power_of_two(n):
 
 
 class Buffer(ABC):
-    def __init__(self, size, n_channels, dtype=np.float32):
+    def __init__(self, size: int, n_channels: int, dtype: np.dtype = np.float32) -> None:
         if not is_power_of_two(size):
             warnings.warn("Buffer size should be a power of 2 for optimal FFT performance.")
 
-        self.size = size
-        self.n_channels = n_channels
-        self.dtype = dtype
-        self.full = False
+        self.size: int = size
+        self.n_channels: int = n_channels
+        self.dtype: np.dtype = dtype
+        self.full: bool = False
+        self.timestamp: float = 0.0   # time of the most recent sample; set by the caller
 
     @abstractmethod
     def add_sample(self, sample):
