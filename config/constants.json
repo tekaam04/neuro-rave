@@ -1,0 +1,9 @@
+{
+  "N_CHANNELS":       8,
+  "SAMPLE_RATE":      512,
+  "WINDOW_SIZE":      512,
+
+  "BIOSEMI_HOST":     "127.0.0.1",
+  "BIOSEMI_PORT":     778,
+  "BYTES_PER_SAMPLE": 3
+}
