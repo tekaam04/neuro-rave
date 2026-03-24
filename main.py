@@ -1,14 +1,14 @@
 import threading
 from src.streaming.lslbridge import TCPSource, BioSemi24BitDecoder, LSLPublisher, LSLConsumer, LSLBridge
 from src.processing.test_dsp import apply_fft
-from src.processing.fifo import MirrorCircleFIFO
+from src.processing.fifo import MirrorCircleBuffer
 from src.dashboard.test_plot import plot_fft
 import numpy as np
 import matplotlib.pyplot as plt
 import src.constants as const
 
 if __name__ == "__main__":
-    tcp = TCPSource(const.HOST, const.PORT)
+    tcp = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
     decoder = BioSemi24BitDecoder(const.N_CHANNELS)
     publisher = LSLPublisher("BioSemiEEG", "EEG", const.N_CHANNELS, const.SAMPLE_RATE, "biosemi_tcp_bridge")
 
@@ -17,7 +17,7 @@ if __name__ == "__main__":
 
     consumer = LSLConsumer("EEG")
 
-    fifo = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+    fifo = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
 
     plt.ion()
     while True:
