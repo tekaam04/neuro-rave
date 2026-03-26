@@ -1,4 +1,5 @@
 import logging
+import threading
 import numpy as np
 import matplotlib.pyplot as plt
 from src.streaming.lslbridge import TCPSource, BioSemi24BitDecoder, LSLPublisher, LSLConsumer, LSLBridge
@@ -23,23 +24,27 @@ if __name__ == "__main__":
     ws = EEGWebSocketServer(host="0.0.0.0", port=const.WS_PORT)
     ws.start()
 
-    # ── FFT test plot ────────────────────────────────────────────────────
-    consumer = LSLConsumer("EEG")
-    fifo = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+    threading.Event().wait()  # block main thread forever
 
-    plt.ion()
-    while True:
-        samples, ts = consumer.get_chunk()
+    
 
-        if len(samples) == 0:
-            continue
+    # # ── FFT test plot ────────────────────────────────────────────────────
+    # consumer = LSLConsumer("EEG")
+    # fifo = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
 
-        fifo.add_chunk(samples)
+    # plt.ion()
+    # while True:
+    #     samples, ts = consumer.get_chunk()
 
-        if fifo.full:
-            sp = np.fft.fft(fifo)
-            sp[0] = 0
+    #     if len(samples) == 0:
+    #         continue
 
-            plt.clf()
-            plt.plot(sp.real)
-            plt.pause(0.001)
+    #     fifo.add_chunk(samples)
+
+    #     if fifo.full:
+    #         sp = np.fft.fft(fifo)
+    #         sp[0] = 0
+
+    #         plt.clf()
+    #         plt.plot(sp.real)
+    #         plt.pause(0.01)

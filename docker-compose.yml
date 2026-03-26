@@ -3,7 +3,7 @@ services:
     build: .
     ports:
       - "8050:8050"
-      - "8765:8765"   # WebSocket server for the dashboard
+      - "8733:8733"   # WebSocket server for the dashboard
     environment:
       - BIOSEMI_HOST=host.docker.internal
     extra_hosts:
@@ -23,7 +23,7 @@ services:
       - ./config:/config       # mounted at /config so vite alias ../config resolves correctly
       - /app/node_modules     # isolate container's node_modules from the host mount
     environment:
-      - VITE_WS_URL=ws://localhost:8765/ws
+      - VITE_WS_URL=ws://localhost:8733/ws
     depends_on:
       - neuro-rave
     restart: unless-stopped
