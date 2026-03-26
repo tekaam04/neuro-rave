@@ -1,49 +1,45 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react"
+import { useEEGStream } from "./hooks/useEEGStream"
+import { EEGChart } from "./components/EEGChart"
+import { SAMPLE_RATE } from "./constants"
 
-const moodColors = {
+const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8765/ws"
+
+const moodColors: Record<string, string> = {
   calm: "#60a5fa",
   focus: "#34d399",
   hype: "#f97316",
-};
-
-const initialHistory = [
-  { time: "10:00:01", energy: 0.32, focus: 0.58 },
-  { time: "10:00:02", energy: 0.41, focus: 0.61 },
-  { time: "10:00:03", energy: 0.55, focus: 0.66 },
-  { time: "10:00:04", energy: 0.69, focus: 0.70 },
-  { time: "10:00:05", energy: 0.74, focus: 0.64 },
-  { time: "10:00:06", energy: 0.48, focus: 0.77 },
-];
-
-function classifyMood(energy) {
-  if (energy < 0.4) return "calm";
-  if (energy < 0.7) return "focus";
-  return "hype";
 }
 
-function getSpotifyPlaylist(mood) {
-  const playlists = {
+function classifyMood(energy: number): string {
+  if (energy < 0.4) return "calm"
+  if (energy < 0.7) return "focus"
+  return "hype"
+}
+
+function getSpotifyPlaylist(mood: string): string {
+  const playlists: Record<string, string> = {
     calm: "Ambient Reset",
     focus: "Deep Focus Flow",
     hype: "High Energy Boost",
-  };
-  return playlists[mood];
+  }
+  return playlists[mood]
 }
 
-function getSunoPrompt(mood) {
-  const prompts = {
+function getSunoPrompt(mood: string): string {
+  const prompts: Record<string, string> = {
     calm: "Slow ambient pads with soft textures and peaceful atmosphere",
     focus: "Minimal no-vocal focus music with steady rhythm and low distraction",
     hype: "High-energy techno with driving percussion and exciting momentum",
-  };
-  return prompts[mood];
+  }
+  return prompts[mood]
 }
 
-function formatPercent(value) {
-  return `${Math.round(value * 100)}%`;
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`
 }
 
-function MetricCard({ label, value, accent }) {
+function MetricCard({ label, value, accent }: { label: string; value: number; accent: string }) {
   return (
     <div className="card">
       <div className="card-label">{label}</div>
@@ -55,28 +51,39 @@ function MetricCard({ label, value, accent }) {
         />
       </div>
     </div>
-  );
+  )
 }
 
-function StatusBadge({ text, color }) {
+function StatusBadge({ text, color }: { text: string; color: string }) {
   return (
     <span className="status-badge" style={{ backgroundColor: color }}>
       {text}
     </span>
-  );
+  )
 }
 
-function LogItem({ text, time }) {
+function LogItem({ text, time }: { text: string; time: string }) {
   return (
     <div className="log-item">
       <span className="log-time">{time}</span>
       <span>{text}</span>
     </div>
-  );
+  )
 }
 
-function TinyBarChart({ history, metricKey, color, title }) {
-  const maxHeight = 120;
+interface HistoryPoint {
+  time: string
+  energy: number
+  focus: number
+}
+
+function TinyBarChart({ history, metricKey, color, title }: {
+  history: HistoryPoint[]
+  metricKey: "energy" | "focus"
+  color: string
+  title: string
+}) {
+  const maxHeight = 120
 
   return (
     <div className="chart-card">
@@ -97,83 +104,85 @@ function TinyBarChart({ history, metricKey, color, title }) {
         ))}
       </div>
     </div>
-  );
+  )
 }
 
 export default function App() {
-  const [connectionStatus, setConnectionStatus] = useState("Connected");
-  const [musicMode, setMusicMode] = useState("Spotify");
-  const [energy, setEnergy] = useState(0.56);
-  const [focus, setFocus] = useState(0.68);
-  const [history, setHistory] = useState(initialHistory);
-  const [generationStatus, setGenerationStatus] = useState("Idle");
+  const { buffer, connected } = useEEGStream(WS_URL)
+
+  const [musicMode, setMusicMode] = useState("Spotify")
+  const [energy, setEnergy] = useState(0.56)
+  const [focus, setFocus] = useState(0.68)
+  const [history, setHistory] = useState<HistoryPoint[]>([])
+  const [generationStatus, setGenerationStatus] = useState("Idle")
   const [logs, setLogs] = useState([
-    { time: "10:00:01", text: "Dashboard started" },
-    { time: "10:00:03", text: "Received EEG metrics" },
-    { time: "10:00:05", text: "Mood classified as focus" },
-  ]);
+    { time: new Date().toLocaleTimeString(), text: "Dashboard started" },
+  ])
 
-  const mood = useMemo(() => classifyMood(energy), [energy]);
-  const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood]);
-  const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood]);
+  const mood = useMemo(() => classifyMood(energy), [energy])
+  const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood])
+  const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood])
 
+  // Build Float32Array[] channels from the FIFO buffer for EEGChart
+  const channels: Float32Array[] = useMemo(() => {
+    if (!buffer) return []
+    const data = buffer.getData()  // number[][] (channel-major)
+    return data.map(ch => new Float32Array(ch))
+  }, [buffer])
+
+  // Simulated energy/focus updates (replace with real feature extraction later)
   useEffect(() => {
     const interval = setInterval(() => {
-      const newEnergy = Math.max(0, Math.min(1, energy + (Math.random() - 0.5) * 0.2));
-      const newFocus = Math.max(0, Math.min(1, focus + (Math.random() - 0.5) * 0.15));
-      const newMood = classifyMood(newEnergy);
-      const oldMood = classifyMood(energy);
+      const newEnergy = Math.max(0, Math.min(1, energy + (Math.random() - 0.5) * 0.2))
+      const newFocus = Math.max(0, Math.min(1, focus + (Math.random() - 0.5) * 0.15))
+      const newMood = classifyMood(newEnergy)
+      const oldMood = classifyMood(energy)
 
-      const now = new Date();
-      const time = now.toLocaleTimeString();
+      const now = new Date()
+      const time = now.toLocaleTimeString()
 
-      setEnergy(newEnergy);
-      setFocus(newFocus);
+      setEnergy(newEnergy)
+      setFocus(newFocus)
 
       setHistory((prev) => {
-        const updated = [...prev, { time, energy: newEnergy, focus: newFocus }];
-        return updated.slice(-8);
-      });
+        const updated = [...prev, { time, energy: newEnergy, focus: newFocus }]
+        return updated.slice(-8)
+      })
 
       if (newMood !== oldMood) {
         setLogs((prev) => [
           { time, text: `Mood changed from ${oldMood} to ${newMood}` },
           ...prev,
-        ].slice(0, 8));
+        ].slice(0, 8))
 
         if (musicMode === "Spotify") {
           setLogs((prev) => [
             { time, text: `Spotify switched to "${getSpotifyPlaylist(newMood)}"` },
             ...prev,
-          ].slice(0, 8));
+          ].slice(0, 8))
         }
 
         if (musicMode === "Suno") {
-          setGenerationStatus("Generating");
+          setGenerationStatus("Generating")
           setLogs((prev) => [
             { time, text: `Suno requested a new ${newMood} track` },
             ...prev,
-          ].slice(0, 8));
+          ].slice(0, 8))
 
           setTimeout(() => {
-            setGenerationStatus("Ready");
-            const readyTime = new Date().toLocaleTimeString();
+            setGenerationStatus("Ready")
+            const readyTime = new Date().toLocaleTimeString()
             setLogs((prev) => [
               { time: readyTime, text: "Suno track finished generating" },
               ...prev,
-            ].slice(0, 8));
-          }, 2500);
+            ].slice(0, 8))
+          }, 2500)
         }
-      } else {
-        setLogs((prev) => [
-          { time, text: `Metrics updated: energy ${formatPercent(newEnergy)}, focus ${formatPercent(newFocus)}` },
-          ...prev,
-        ].slice(0, 8));
       }
-    }, 3000);
+    }, 3000)
 
-    return () => clearInterval(interval);
-  }, [energy, focus, musicMode]);
+    return () => clearInterval(interval)
+  }, [energy, focus, musicMode])
 
   return (
     <div className="app-shell">
@@ -187,12 +196,24 @@ export default function App() {
 
         <div className="header-statuses">
           <StatusBadge
-            text={connectionStatus}
-            color={connectionStatus === "Connected" ? "#16a34a" : "#dc2626"}
+            text={connected ? "Connected" : "Disconnected"}
+            color={connected ? "#16a34a" : "#dc2626"}
           />
           <StatusBadge text={`Mode: ${musicMode}`} color="#1d4ed8" />
         </div>
       </header>
+
+      {/* ── Live EEG Chart ─────────────────────────────────────────────── */}
+      <section className="panel" style={{ marginBottom: 18 }}>
+        <h2>Live EEG Stream</h2>
+        {channels.length > 0 ? (
+          <EEGChart channels={channels} sampleRate={SAMPLE_RATE} />
+        ) : (
+          <p style={{ color: "#94a3b8" }}>
+            {connected ? "Waiting for EEG data..." : "Connecting to WebSocket server..."}
+          </p>
+        )}
+      </section>
 
       <section className="top-grid">
         <div className="panel">
@@ -302,5 +323,5 @@ export default function App() {
         </div>
       </section>
     </div>
-  );
+  )
 }

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(tsx|jsx|ts|js\\)$\")",
+      "Bash(git diff-tree:*)",
+      "Bash(grep -E '\\\\.\\(ts|tsx|js|jsx\\)$')"
+    ],
+    "additionalDirectories": [
+      "/Users/zrentala/Documents/neuro-rave/dashboard/src"
+    ]
+  }
+}
