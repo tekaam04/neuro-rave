@@ -124,11 +124,9 @@ export default function App() {
   const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood])
 
   // Build Float32Array[] channels from the FIFO buffer for EEGChart
-  const channels: Float32Array[] = useMemo(() => {
-    if (!buffer) return []
-    const data = buffer.getData()  // number[][] (channel-major)
-    return data.map(ch => new Float32Array(ch))
-  }, [buffer])
+  const channels: Float32Array[] = buffer
+    ? buffer.getData().map(ch => new Float32Array(ch))
+    : []
 
   // Simulated energy/focus updates (replace with real feature extraction later)
   useEffect(() => {

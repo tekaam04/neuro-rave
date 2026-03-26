@@ -16,7 +16,7 @@ export interface UseEEGStreamResult {
 // ── Hook ───────────────────────────────────────────────────────────────────────
 
 export function useEEGStream(url: string): UseEEGStreamResult {
-  const [buffer,    setBuffer]    = useState<Float32CircularFIFO | null>(null)
+  const [, setTick]              = useState(0)
   const [connected, setConnected] = useState(false)
 
   const fifoRef = useRef<Float32CircularFIFO | null>(null)
@@ -39,7 +39,7 @@ export function useEEGStream(url: string): UseEEGStreamResult {
     )
 
     fifo.addChunk(chunk)
-    setBuffer(fifo)
+    setTick(t => t + 1)
   }, [])
 
   // ── Router ─────────────────────────────────────────────────────────────────
@@ -71,5 +71,5 @@ export function useEEGStream(url: string): UseEEGStreamResult {
     return (): void => { wsRef.current?.close() }
   }, [url, onMessage])
 
-  return { buffer, connected }
+  return { buffer: fifoRef.current, connected }
 }
