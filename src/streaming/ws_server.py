@@ -27,10 +27,9 @@ from typing import AsyncGenerator, Set
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from lslbridge import LSLConsumer
-from packets import RawPacket
-
-from ..constants import WINDOW_SIZE
+from src.streaming.lslbridge import LSLConsumer
+from src.streaming.packets import RawPacket
+from src.constants import WINDOW_SIZE
 
 logger = logging.getLogger(__name__)
 
