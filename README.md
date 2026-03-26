@@ -74,19 +74,25 @@ SPOTIFY_FIXED_MOOD=focus SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fi
 
 **What happens:** Script connects to Spotify → starts the mood playlist → shows progress → stops after duration.
 
-#### Docker (For EEG Processing Only)
+#### Docker (Playback)
 
-⚠️ **Docker cannot control Spotify playback** (containers can't access host Spotify app).
+Use Docker for playback, but **get the refresh token locally** (recommended).
 
-Use Docker for EEG processing + dashboard, local Python for Spotify testing:
+Why: the refresh-token script runs a local callback server at `http://127.0.0.1:8080/callback`.
+Spotify may warn that `http://localhost:...` is “not secure” in the dashboard; `127.0.0.1`
+is the reliable option. Running the callback server inside Docker can also cause
+`ERR_CONNECTION_REFUSED` in the browser unless you set up port publishing + binding.
 
 ```bash
-# EEG + Dashboard (Docker)
-docker compose up
+# 1) Get refresh token locally (host machine)
+python get_spotify_refresh_token.py
 
-# Spotify testing (Local)
-python3 scripts/spotify_fixed_mood_demo.py
+# 2) Run demo in Docker (make sure Spotify is active on host)
+SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 \
+  docker compose run --rm neuro-rave python scripts/spotify_fixed_mood_demo.py
 ```
+
+**Note:** Spotify app must be running on your host machine for Docker to control playback.
 
 ## Conda (local development)
 
@@ -110,10 +116,6 @@ python main.py
 **❌ "User not registered for this application"**
 - Add your Spotify email to the app's user list in Spotify Developer Dashboard
 - For >25 users, apply for "Extension Mode"
-
-**❌ Docker can't control Spotify**
-- Use local Python for Spotify testing
-- Docker containers can't access host Spotify app
 
 ------------------------------------------------------------------------
 
