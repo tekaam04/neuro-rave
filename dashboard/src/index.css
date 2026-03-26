@@ -1,2 +1,272 @@
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #0a0a0a; color: #eee; font-family: monospace; }
+:root {
+  font-family: Inter, Arial, sans-serif;
+  color: #e5e7eb;
+  background: #0f172a;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.15), transparent 30%),
+    radial-gradient(circle at top right, rgba(249, 115, 22, 0.12), transparent 30%),
+    #0f172a;
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  margin: 0 0 8px;
+  font-size: 2.2rem;
+}
+
+.subtitle {
+  margin: 0;
+  color: #cbd5e1;
+  max-width: 760px;
+}
+
+.header-statuses {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.status-badge {
+  color: white;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.top-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.panel,
+.card,
+.chart-card {
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
+.panel h2,
+.chart-title {
+  margin-top: 0;
+  margin-bottom: 14px;
+  font-size: 1.2rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.card-label {
+  color: #94a3b8;
+  font-size: 0.92rem;
+  margin-bottom: 8px;
+}
+
+.metric-value,
+.big-text {
+  font-size: 1.55rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.small-text {
+  color: #e2e8f0;
+  font-size: 0.98rem;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  background: #1e293b;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.mood-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.mood-circle {
+  width: 130px;
+  height: 130px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  color: white;
+  margin-bottom: 12px;
+}
+
+.mood-description {
+  color: #cbd5e1;
+  margin-top: 0;
+}
+
+.legend-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.legend-pill {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #cbd5e1;
+  border: 1px solid #334155;
+}
+
+.legend-pill.active {
+  background: #334155;
+  color: white;
+  border-color: #64748b;
+}
+
+.music-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+}
+
+.toggle-btn {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: white;
+  cursor: pointer;
+}
+
+.active-btn {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.music-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin: 18px 0;
+}
+
+.chart-bars {
+  height: 150px;
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.chart-bar-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.chart-bar {
+  width: 100%;
+  max-width: 34px;
+  border-radius: 10px 10px 0 0;
+}
+
+.chart-time {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 12px;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.log-time {
+  color: #60a5fa;
+  min-width: 82px;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .top-grid,
+  .metrics-grid,
+  .music-grid,
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    flex-direction: column;
+  }
+}
