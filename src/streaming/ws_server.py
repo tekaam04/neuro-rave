@@ -112,10 +112,16 @@ class EEGWebSocketServer:
 
         while True:
             chunk, timestamps = await loop.run_in_executor(
-                None, lambda: self._consumer.get_chunk(max_samples=WINDOW_SIZE)  # type: ignore[union-attr]
+                None, lambda: self._consumer.get_chunk(max_samples=const.WINDOW_SIZE)  # type: ignore[union-attr]
             )
 
-            if not chunk or not self._clients:
+            if not chunk:
+                await asyncio.sleep(0.05)
+                continue
+
+            # logger.info("chunk=%d samples, clients=%d", len(chunk), len(self._clients))
+
+            if not self._clients:
                 await asyncio.sleep(0.05)
                 continue
 
@@ -127,6 +133,7 @@ class EEGWebSocketServer:
             )
 
             await self._broadcast(packet.to_json())
+            # logger.info("broadcast sent to %d client(s)", len(self._clients))
             await asyncio.sleep(0.9)  # pace to ~1 packet/s
 
     # ── Entry point ────────────────────────────────────────────────────────────

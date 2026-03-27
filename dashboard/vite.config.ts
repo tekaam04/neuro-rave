@@ -7,7 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Maps @config → config/ at the project root.
-      // In Docker the volume is mounted at /app/config.
+      // In Docker the volume is mounted at /config.
       '@config': path.resolve(__dirname, '../config'),
     },
   },

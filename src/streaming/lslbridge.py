@@ -2,7 +2,6 @@ import socket
 import threading
 import numpy as np
 from pylsl import StreamInfo, StreamOutlet, StreamInlet, resolve_stream
-from src.constants import N_CHANNELS, SAMPLE_RATE
 
 class TCPSource:
     def __init__(self, host, port):
@@ -92,11 +91,3 @@ class LSLBridge:
             daemon=True
         )
         self._thread.start()
-
-
-def make_biosemi_bridge(host: str, port: int) -> LSLBridge:
-    """Factory that wires up a BioSemi TCP source into a ready-to-start LSLBridge."""
-    tcp     = TCPSource(host, port)
-    decoder = BioSemi24BitDecoder(N_CHANNELS)
-    pub     = LSLPublisher("BioSemi", "EEG", N_CHANNELS, SAMPLE_RATE, source_id="biosemi-01")
-    return LSLBridge(tcp, decoder, pub)

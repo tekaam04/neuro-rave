@@ -16,6 +16,7 @@ WINDOW_SIZE:      int = _config["WINDOW_SIZE"]
 BIOSEMI_HOST:     str = os.environ.get("BIOSEMI_HOST", _config["BIOSEMI_HOST"])
 BIOSEMI_PORT:     int = _config["BIOSEMI_PORT"]
 BYTES_PER_SAMPLE: int = _config["BYTES_PER_SAMPLE"]
+WS_PORT: int = _config["WS_PORT"]
 
 ### Spotify API
 SPOTIFY_CLIENT_ID:      str = _config["SPOTIFY_CLIENT_ID"]

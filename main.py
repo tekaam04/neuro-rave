@@ -1,12 +1,14 @@
 # --- BEGIN agent-added: logging, Spotify imports, wired lslbridge imports ---
-import logging
 import os
 import time
 from collections import deque
-
-import matplotlib.pyplot as plt
+import logging
+import threading
 import numpy as np
-
+import matplotlib.pyplot as plt
+from src.streaming.lslbridge import TCPSource, BioSemi24BitDecoder, LSLPublisher, LSLConsumer, LSLBridge
+from src.streaming.ws_server import EEGWebSocketServer
+from src.processing.fifo import MirrorCircleBuffer
 import src.constants as const
 from src.music_gen.spotify_controller import (
     NeuroFeatures as SpotifyNeuroFeatures,
@@ -27,7 +29,25 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 # --- END agent-added ---
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+
 if __name__ == "__main__":
+    #    # ── LSL Bridge: TCP → decode → LSL stream ────────────────────────────
+    # tcp = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
+    # decoder = BioSemi24BitDecoder(const.N_CHANNELS)
+    # publisher = LSLPublisher(
+    #     "BioSemiEEG", "EEG", const.N_CHANNELS, const.SAMPLE_RATE, "biosemi_tcp_bridge"
+    # )
+
+    # bridge = LSLBridge(tcp, decoder, publisher)
+    # bridge.start()
+
+    # # ── WebSocket server: LSL → browser dashboard ────────────────────────
+    # ws = EEGWebSocketServer(host="0.0.0.0", port=const.WS_PORT)
+    # ws.start()
+
+    # threading.Event().wait()  # block main thread forever
+
     # --- BEGIN agent-added: optional WebSocket + REST server (port 8765) ---
     if os.environ.get("EEG_WS_SERVER", "1").strip() in ("1", "true", "yes"):
         try:
@@ -243,3 +263,26 @@ if __name__ == "__main__":
             time.sleep(0.25)
         else:
             time.sleep(0.01)
+
+    
+
+    # # ── FFT test plot ────────────────────────────────────────────────────
+    # consumer = LSLConsumer("EEG")
+    # fifo = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+
+    # plt.ion()
+    # while True:
+    #     samples, ts = consumer.get_chunk()
+
+    #     if len(samples) == 0:
+    #         continue
+
+    #     fifo.add_chunk(samples)
+
+    #     if fifo.full:
+    #         sp = np.fft.fft(fifo)
+    #         sp[0] = 0
+
+    #         plt.clf()
+    #         plt.plot(sp.real)
+    #         plt.pause(0.01)
