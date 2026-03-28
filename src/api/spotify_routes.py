@@ -133,9 +133,12 @@ class MoodMappingIn(BaseModel):
 
     @field_validator("calm_uri", "focus_uri", "hype_uri")
     @classmethod
-    def must_be_spotify_playlist_uri(cls, v: str) -> str:
-        if not v.startswith("spotify:playlist:"):
-            raise ValueError("must be a spotify:playlist: URI")
+    def must_be_spotify_play_context_uri(cls, v: str) -> str:
+        if not (
+            v.startswith("spotify:playlist:")
+            or v.startswith("spotify:album:")
+        ):
+            raise ValueError("must be a spotify:playlist: or spotify:album: URI")
         return v
 
 
@@ -144,6 +147,9 @@ class MoodMappingOut(BaseModel):
     calm_uri: str
     focus_uri: str
     hype_uri: str
+    calm_uris: List[str]
+    focus_uris: List[str]
+    hype_uris: List[str]
     updated_at: float
 
 
@@ -167,15 +173,24 @@ def save_playlist_mapping(
 ) -> MoodMappingOut:
     uris = {payload.calm_uri, payload.focus_uri, payload.hype_uri}
     if len(uris) < 3:
-        raise HTTPException(status_code=400, detail="calm_uri, focus_uri, and hype_uri must be three different playlists")
+        raise HTTPException(
+            status_code=400,
+            detail="calm_uri, focus_uri, and hype_uri must be three different Spotify URIs",
+        )
 
     mapping = {"calm": payload.calm_uri, "focus": payload.focus_uri, "hype": payload.hype_uri}
-    save_mood_playlists(mapping, user_id=user.user_id)
+    try:
+        save_mood_playlists(mapping, user_id=user.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return MoodMappingOut(
         user_id=user.user_id,
         calm_uri=payload.calm_uri,
         focus_uri=payload.focus_uri,
         hype_uri=payload.hype_uri,
+        calm_uris=[payload.calm_uri],
+        focus_uris=[payload.focus_uri],
+        hype_uris=[payload.hype_uri],
         updated_at=time.time(),
     )
 
@@ -187,8 +202,11 @@ def get_playlist_mapping(user: SpotifyUserContext = Depends(get_spotify_user_con
         raise HTTPException(status_code=404, detail="No mood mapping saved; POST /spotify/playlists/mapping first")
     return MoodMappingOut(
         user_id=user.user_id,
-        calm_uri=m["calm"],
-        focus_uri=m["focus"],
-        hype_uri=m["hype"],
+        calm_uri=m["calm"][0],
+        focus_uri=m["focus"][0],
+        hype_uri=m["hype"][0],
+        calm_uris=m["calm"],
+        focus_uris=m["focus"],
+        hype_uris=m["hype"],
         updated_at=time.time(),
     )

@@ -1,11 +1,20 @@
+from __future__ import annotations
+
+import logging
 import os
 import time
-import logging
-import threading
+from collections import deque
+
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 
-from src.streaming.lslbridge import TCPSource, BioSemi24BitDecoder, LSLPublisher, LSLConsumer, LSLBridge
+from src.streaming.lslbridge import (
+    TCPSource,
+    BioSemi24BitDecoder,
+    LSLPublisher,
+    LSLConsumer,
+    LSLBridge,
+)
 from src.streaming.ws_server import EEGWebSocketServer
 from src.processing.fifo import MirrorCircleBuffer
 import src.constants as const
@@ -25,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 
 THETA = (4, 8)
 ALPHA = (8, 13)
-BETA  = (13, 30)
+BETA = (13, 30)
 GAMMA = (30, 100)
 
 
@@ -64,14 +73,14 @@ class EEGProcessor:
 
         theta = bandpass(data, THETA[0], THETA[1], const.SAMPLE_RATE)
         alpha = bandpass(data, ALPHA[0], ALPHA[1], const.SAMPLE_RATE)
-        beta  = bandpass(data, BETA[0],  BETA[1],  const.SAMPLE_RATE)
+        beta = bandpass(data, BETA[0], BETA[1], const.SAMPLE_RATE)
         gamma = bandpass(data, GAMMA[0], GAMMA[1], const.SAMPLE_RATE)
 
         self.alpha_hist.append(alpha.copy())
 
         theta_power = bandpower(theta)
         alpha_power = bandpower(alpha)
-        beta_power  = bandpower(beta)
+        beta_power = bandpower(beta)
         gamma_power = bandpower(gamma)
 
         theta_beta = np.where(beta_power > 0, theta_power / beta_power, 0.0)
@@ -87,18 +96,17 @@ class EEGProcessor:
             )
 
         return {
-            "theta":             theta_power,
-            "alpha":             alpha_power,
-            "beta":              beta_power,
-            "gamma":             gamma_power,
-            "theta_beta_ratio":  theta_beta,
+            "theta": theta_power,
+            "alpha": alpha_power,
+            "beta": beta_power,
+            "gamma": gamma_power,
+            "theta_beta_ratio": theta_beta,
             "alpha_suppression": alpha_sup,
         }
 
 
 # ── Feature → Spotify mapping ─────────────────────────────────────────────────
 
-from collections import deque
 energy_history: deque[float] = deque(maxlen=50)
 
 
@@ -124,11 +132,10 @@ def features_to_spotify(eeg_features: dict) -> SpotifyNeuroFeatures:
 def generate_sim_chunk() -> np.ndarray:
     """Generate one window of simulated raw EEG signal (no feature simulation)."""
     t = np.arange(const.WINDOW_SIZE, dtype=np.float32) / float(const.SAMPLE_RATE)
-    # Mix of alpha (10Hz) and beta (20Hz) with noise
     signal_1d = (
-        0.5 * np.sin(2 * np.pi * 10.0 * t) +
-        0.3 * np.sin(2 * np.pi * 20.0 * t) +
-        np.random.normal(scale=0.2, size=const.WINDOW_SIZE)
+        0.5 * np.sin(2 * np.pi * 10.0 * t)
+        + 0.3 * np.sin(2 * np.pi * 20.0 * t)
+        + np.random.normal(scale=0.2, size=const.WINDOW_SIZE)
     ).astype(np.float32)
     return np.tile(signal_1d[:, None], (1, const.N_CHANNELS))
 
@@ -136,6 +143,11 @@ def generate_sim_chunk() -> np.ndarray:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent / ".env")
 
     # ── WebSocket server ──────────────────────────────────────────────────
     try:
@@ -147,11 +159,17 @@ if __name__ == "__main__":
     consumer: LSLConsumer | None = None
 
     if const.SIMULATE:
-        logger.info("SIMULATE=true — using generated EEG signal (features computed from real DSP pipeline)")
+        logger.info(
+            "SIMULATE=true — using generated EEG signal (features computed from real DSP pipeline)"
+        )
     else:
-        logger.info("SIMULATE=false — connecting to BioSemi at %s:%d", const.BIOSEMI_HOST, const.BIOSEMI_PORT)
-        tcp       = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
-        decoder   = BioSemi24BitDecoder(const.N_CHANNELS)
+        logger.info(
+            "SIMULATE=false — connecting to BioSemi at %s:%d",
+            const.BIOSEMI_HOST,
+            const.BIOSEMI_PORT,
+        )
+        tcp = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
+        decoder = BioSemi24BitDecoder(const.N_CHANNELS)
         publisher = LSLPublisher(
             "BioSemiEEG", "EEG", const.N_CHANNELS, const.SAMPLE_RATE, "biosemi_tcp_bridge"
         )
@@ -185,17 +203,18 @@ if __name__ == "__main__":
             )
             logger.info("Spotify neuro controller enabled.")
         else:
-            logger.warning("Spotify token set but no mood playlists configured — Spotify disabled.")
+            logger.warning(
+                "Spotify token set but no mood playlists configured — Spotify disabled."
+            )
     else:
         logger.info("No SPOTIFY_REFRESH_TOKEN — Spotify disabled.")
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
     while True:
-        # Get samples — either simulated or from LSL
         if const.SIMULATE:
             samples = generate_sim_chunk()
-            time.sleep(const.WINDOW_SIZE / const.SAMPLE_RATE)  # pace to real-time
+            time.sleep(const.WINDOW_SIZE / const.SAMPLE_RATE)
         else:
             assert consumer is not None
             samples, ts = consumer.get_chunk()
@@ -203,7 +222,6 @@ if __name__ == "__main__":
                 time.sleep(0.01)
                 continue
 
-        # Feed into processor (same pipeline regardless of source)
         processor.buffer.add_chunk(np.asarray(samples, dtype=np.float32))
 
         if not processor.buffer.full:

@@ -36,6 +36,10 @@ docker compose up
 
 To stop: `docker compose down`
 
+**`docker compose up` and EEG:** `main.py` defaults to **`EEG_SIM_AUTO=1`**. The stack still starts the **real** TCP→LSL path in the container; if no real samples arrive within **`EEG_NO_DATA_TIMEOUT_S`** (default 2 seconds), it **falls back** to the synthetic loop—so you will often see `SIM target=...` logs without BioSemi. That is fallback simulation, not **`EEG_SIM=1`**. To **force** simulation only (skip the real pipeline), use **`EEG_SIM=1`** in the §4 `docker compose run` example or add that variable under `environment` in `docker-compose.yml`. For **real** acquisition, ensure ActiView/your bridge is reachable at **`BIOSEMI_HOST`** (`host.docker.internal` from the container); set **`EEG_SIM_AUTO=0`** if you do not want automatic fallback to sim when data stops.
+
+Spotify still needs a valid `./.env` on the host (`SPOTIFY_REFRESH_TOKEN` and mood playlist IDs or `config/spotify_mood_mapping.json`). Restart the stack after changing `.env`.
+
 ### Running other scripts in the container
 
 ```bash
@@ -96,8 +100,8 @@ docker compose run --rm \
 
 #### 4) Docker demo — EEG simulator (`main.py`)
 
-Another way to verify Spotify + mood switching without BioSemi: simulated EEG cycles
-calm → focus → hype with 60-second steps.
+Another way to verify Spotify + mood switching without BioSemi: **forced** simulated EEG cycles
+calm → focus → hype with 60-second steps (`EEG_SIM=1` skips the real TCP/LSL startup). This is stricter than `docker compose up` alone, which uses **real-first + auto fallback** (see the Docker blurb above).
 
 ```bash
 docker compose run --rm \
@@ -229,6 +233,8 @@ You're using the wrong Python. Activate the conda env first:
 conda activate neuro-rave
 python main.py
 ```
+
+If you intend to run only in Docker, use `docker compose up` or `docker compose run --rm neuro-rave python main.py` instead, and rebuild after changing `requirements.txt`.
 
 **`ConnectionRefused` when running in Docker**
 

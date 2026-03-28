@@ -7,14 +7,21 @@ services:
       - BIOSEMI_HOST=host.docker.internal
       - WS_HOST=0.0.0.0
       - WS_PORT=8733
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
       - SPOTIFY_REFRESH_TOKEN=${SPOTIFY_REFRESH_TOKEN:-}
+      - SPOTIFY_USER_ID=${SPOTIFY_USER_ID:-default}
+      - SPOTIFY_PLAYLIST_CALM=${SPOTIFY_PLAYLIST_CALM:-}
+      - SPOTIFY_PLAYLIST_FOCUS=${SPOTIFY_PLAYLIST_FOCUS:-}
+      - SPOTIFY_PLAYLIST_HYPE=${SPOTIFY_PLAYLIST_HYPE:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./src:/app/src
       - ./main.py:/app/main.py
       - ./config:/app/config
-      - ./.env:/app/.env
+      - ./scripts:/app/scripts
+      - ./get_spotify_refresh_token.py:/app/get_spotify_refresh_token.py
     restart: unless-stopped
 
   dashboard:
