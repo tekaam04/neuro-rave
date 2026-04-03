@@ -35,7 +35,7 @@ from src.api.spotify_routes import router as spotify_router
 import src.constants as const
 from src.streaming.lslbridge import LSLConsumer
 from src.streaming.packets import RawPacket, FeaturesPacket
-from src.processing.fifo import MirrorCircleBuffer
+from src.processing.fifo import MirrorCircleFIFO
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class EEGWebSocketServer:
 
         self._clients:  Set[WebSocket]     = set()
         self._consumer: LSLConsumer | None = None
-        self._features_buf = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+        self._features_buf = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
         self._features_dirty = False
         self._energy_history: list[float] = []
 

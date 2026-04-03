@@ -12,7 +12,7 @@ from typing import TypeAlias
 import numpy as np
 import pandas as pd
 
-from .buffers import Buffer
+from .buffers import FIFO
 from ..constants import SAMPLE_RATE
 
 ### problems: detection of event will only happen after enough data has entered the buffer.
@@ -94,7 +94,7 @@ class EventDetector(ABC):
         return ""
 
     @abstractmethod
-    def check(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check(self, buffer: FIFO, channel: int) -> SingleResult:
         """
         Inspect *buffer* at *channel* and return the event timestamp on
         detection, or None if the event has not occurred.
@@ -122,16 +122,16 @@ class DurationEventDetector(EventDetector, ABC):
         self._last_duration: float | None = None
 
     @abstractmethod
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, buffer: FIFO, channel: int) -> SingleResult:
         """Return timestamp when the event begins on *channel*, else None."""
         ...
 
     @abstractmethod
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, buffer: FIFO, channel: int) -> SingleResult:
         """Return timestamp when the event ends on *channel*, else None."""
         ...
 
-    def check(self, buffer: Buffer, channel: int) -> DurationSingleResult:
+    def check(self, buffer: FIFO, channel: int) -> DurationSingleResult:
         if not self.is_on:
             ts: SingleResult = self.check_onset(buffer, channel)
             if ts is not None:
@@ -185,7 +185,7 @@ class CounterMixin:
         self._count: int = 0
         self._threshold_fired: bool = False
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
+    def check(self, buffer: FIFO, channel: int) -> AnySingleResult:
         result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
         if result is not None:
             self._count += 1
@@ -220,7 +220,7 @@ class DebugMixin:
     Also provides log_debug() for manual debug messages.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
+    def check(self, buffer: FIFO, channel: int) -> AnySingleResult:
         result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
@@ -242,7 +242,7 @@ class WarningMixin:
     timestamp, channel, and duration if available.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
+    def check(self, buffer: FIFO, channel: int) -> AnySingleResult:
         result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
@@ -264,7 +264,7 @@ class ErrorMixin:
     detected. Stops the program unless the caller catches the exception.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
+    def check(self, buffer: FIFO, channel: int) -> AnySingleResult:
         result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
@@ -346,7 +346,7 @@ class DetectorGroup:
 
     # ── Step ──────────────────────────────────────────────────────────────────
 
-    def check(self, buffer: Buffer) -> EventLogEntry | None:
+    def check(self, buffer: FIFO) -> EventLogEntry | None:
         """
         Run every channel instance against *buffer*.
 
@@ -440,14 +440,14 @@ class EventDetectorManager:
 
     # ── Step ──────────────────────────────────────────────────────────────────
 
-    def check(self, name: str, buffer: Buffer) -> EventLogEntry | None:
+    def check(self, name: str, buffer: FIFO) -> EventLogEntry | None:
         """Run a single detector group by name and return its log entry (or None)."""
         entry = self.get_group(name).check(buffer)
         if entry is not None:
             self.event_log.append(entry)
         return entry
 
-    def check_all(self, buffer: Buffer) -> list[EventLogEntry]:
+    def check_all(self, buffer: FIFO) -> list[EventLogEntry]:
         """
         Run every detector group against *buffer*.
 
@@ -560,12 +560,12 @@ class DisconnectionDetector(WarningMixin, DurationEventDetector):
         # we will store threshold here
         self.var_thresh = var_thresh
 
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, buffer: FIFO, channel: int) -> SingleResult:
         # if flat signal → disconnection started
         result = buffer.timestamp if is_flat(buffer[channel,], self.var_thresh) else None
         return SingleResult(result)
 
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, buffer: FIFO, channel: int) -> SingleResult:
         # if signal is no longer flat → disconnection ended
         result = buffer.timestamp if not is_flat(buffer[channel,], self.var_thresh) else None
         return SingleResult(result)
@@ -576,12 +576,12 @@ class LineNoiseDetector(WarningMixin, DurationEventDetector):
         self.line_noise = line_noise
         self.noise_thresh = noise_thresh
 
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, buffer: FIFO, channel: int) -> SingleResult:
         # if flat signal → disconnection started
         result = buffer.timestamp if high_line_noise(buffer[channel,], self.line_noise, self.noise_thresh) else None
         return SingleResult(result)
 
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, buffer: FIFO, channel: int) -> SingleResult:
         # if signal is no longer flat → disconnection ended
         result = buffer.timestamp if not high_line_noise(buffer[channel,], self.line_noise, self.noise_thresh) else None
         return SingleResult(result)
@@ -592,7 +592,7 @@ class IdenticalSignalDetector(WarningMixin, DurationEventDetector):
         super().__init__()
 
     # some how need to check all channels that are far away from channel of interest have low correlation, may need to do this at the group level
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, buffer: FIFO, channel: int) -> SingleResult:
         return None
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, buffer: FIFO, channel: int) -> SingleResult:
         return None

@@ -20,10 +20,10 @@ def samples_to_seconds(samples: int, sample_rate: int) -> float:
     return samples / sample_rate
 
 
-class Buffer(ABC):
+class FIFO(ABC):
     def __init__(self, size: int, n_channels: int, sample_rate: int | None = None, dtype: np.dtype = np.float32) -> None:
         if not is_power_of_two(size):
-            warnings.warn("Buffer size should be a power of 2 for optimal FFT performance.")
+            warnings.warn("FIFO size should be a power of 2 for optimal FFT performance.")
 
         self.size: int = size
         self.n_channels: int = n_channels
@@ -33,7 +33,7 @@ class Buffer(ABC):
         self.timestamp: float = 0.0   # time of the most recent sample; set by the caller
 
     @classmethod
-    def from_seconds(cls, seconds: float, sample_rate: int, n_channels: int, **kwargs) -> "Buffer":
+    def from_seconds(cls, seconds: float, sample_rate: int, n_channels: int, **kwargs) -> "FIFO":
         """Create a buffer sized to hold `seconds` worth of data."""
         size = seconds_to_samples(seconds, sample_rate)
         return cls(size=size, n_channels=n_channels, sample_rate=sample_rate, **kwargs)
@@ -52,7 +52,7 @@ class Buffer(ABC):
     def data(self):
         pass
 
-class CircularBuffer(Buffer):
+class CircularFIFO(FIFO):
     def __init__(self, size, n_channels, sample_rate=None, dtype=np.float32):
         super().__init__(size, n_channels, sample_rate, dtype)
         self._data = np.zeros((size, n_channels), dtype=dtype)
@@ -117,7 +117,7 @@ class CircularBuffer(Buffer):
     def __getitem__(self, item):
         return self.data[item]
     
-class MirrorCircleBuffer(Buffer):
+class MirrorCircleFIFO(FIFO):
     def __init__(self, size, n_channels, sample_rate=None, dtype=np.float32):
         super().__init__(size, n_channels, sample_rate, dtype)
         self._data = np.zeros((size * 2, n_channels), dtype=dtype)

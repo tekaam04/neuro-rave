@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 
-from src.processing.fifo import MirrorCircleBuffer
+from src.processing.fifo import MirrorCircleFIFO
 import src.constants as const
 from src.music_gen.spotify_controller import (
     NeuroFeatures as SpotifyNeuroFeatures,
@@ -61,7 +61,7 @@ def bandpower(data):
 
 class EEGProcessor:
     def __init__(self, window_seconds=1.0):
-        self.buffer = MirrorCircleBuffer.from_seconds(
+        self.buffer = MirrorCircleFIFO.from_seconds(
             seconds=window_seconds,
             sample_rate=const.SAMPLE_RATE,
             n_channels=const.N_CHANNELS,
