@@ -135,6 +135,14 @@ public:
         throw std::invalid_argument("Channel not found: " + name);
     }
 
+    std::vector<std::string> getChannelNames() {
+        std::vector<std::string> result(nChannels);
+        for (int i = 0; i < nChannels; i++) {
+            result[i] = channels[i].channelName;
+        }
+        return result;
+    }
+
 private:
     std::vector<T> channels;
 };
