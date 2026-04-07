@@ -15,16 +15,7 @@ AudioWriter::~AudioWriter() {
     ma_device_uninit(&device);
 }
 
-void AudioWriter::dataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+void AudioWriter::dataCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma_uint32 frameCount) {
     auto* fifo = static_cast<MultiSignalFIFO<CircularFIFO>*>(pDevice->pUserData);
-    float* out = static_cast<float*>(pOutput);
-
-    int nChannels = fifo->nChannels;
-    auto samples = fifo->getNSamples(frameCount);
-
-    for (ma_uint32 frame = 0; frame < frameCount; frame++) {
-        for (int ch = 0; ch < nChannels; ch++) {
-            out[frame * nChannels + ch] = samples[ch][frame];
-        }
-    }
+    fifo->readNSamplesInterleaved(static_cast<float*>(pOutput), static_cast<int>(frameCount));
 }

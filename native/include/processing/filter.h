@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <span>
 #include <string>
 #include "fifo.h"
 
@@ -9,16 +10,18 @@ public:
     BaseFilter(float sampleRate, float freq = 0.f, float q = 0.707f);
     virtual ~BaseFilter() = default;
 
-    virtual float applyFilter(std::vector<float>& buffer) = 0;
-    virtual std::vector<float> applyFilterChunk(std::vector<float>& buffer);
+    virtual float applyFilter(std::span<const float> buffer) = 0;
+    virtual void applyFilterChunk(std::span<const float> in,
+                                  std::span<float> out);
 
     void setFreq(float freq);
     void setQ(float q);
-    float getFreq();
-    float getQ();
+    float getFreq() const;
+    float getQ() const;
 
 protected:
-    static float getWeightedSum(std::vector<float>& coeffs, std::vector<float>& buffer);
+    static float getWeightedSum(std::span<const float> coeffs,
+                                std::span<const float> buffer);
     virtual void calculateCoefficients() = 0;
     virtual void calculateFreqAndQ() = 0;
 
@@ -30,9 +33,10 @@ protected:
 class FIRFilter : public BaseFilter {
 public:
     FIRFilter(float sampleRate, float freq, float q = 0.707f);
-    FIRFilter(float sampleRate, std::vector<float> preCoeffs);
+    FIRFilter(float sampleRate, const std::vector<float>& preCoeffs);
+    FIRFilter(float sampleRate, std::vector<float>&& preCoeffs);
 
-    float applyFilter(std::vector<float>& buffer) override = 0;
+    float applyFilter(std::span<const float> buffer) override = 0;
 
 protected:
     void calculateCoefficients() override = 0;
@@ -43,9 +47,10 @@ protected:
 class BasicFIRFilter : public FIRFilter {
 public:
     BasicFIRFilter(float sampleRate, float freq, float q = 0.707f);
-    BasicFIRFilter(float sampleRate, std::vector<float> preCoeffs);
+    BasicFIRFilter(float sampleRate, const std::vector<float>& preCoeffs);
+    BasicFIRFilter(float sampleRate, std::vector<float>&& preCoeffs);
 
-    float applyFilter(std::vector<float>& buffer) override;
+    float applyFilter(std::span<const float> buffer) override;
 
 protected:
     void calculateCoefficients() override;
@@ -55,9 +60,12 @@ protected:
 class IIRFilter : public BaseFilter {
 public:
     IIRFilter(float sampleRate, float freq, float q = 0.707f);
-    IIRFilter(float sampleRate, std::vector<float> preCoeffs, std::vector<float> postCoeffs);
+    IIRFilter(float sampleRate, const std::vector<float>& preCoeffs,
+                                const std::vector<float>& postCoeffs);
+    IIRFilter(float sampleRate, std::vector<float>&& preCoeffs,
+                                std::vector<float>&& postCoeffs);
 
-    float applyFilter(std::vector<float>& buffer) override = 0;
+    float applyFilter(std::span<const float> buffer) override = 0;
 
 protected:
     void calculateCoefficients() override = 0;
@@ -70,9 +78,12 @@ protected:
 class BiquadIIRLowPassFilter : public IIRFilter {
 public:
     BiquadIIRLowPassFilter(float sampleRate, float freq, float q = 0.707f);
-    BiquadIIRLowPassFilter(float sampleRate, std::vector<float> preCoeffs, std::vector<float> postCoeffs);
+    BiquadIIRLowPassFilter(float sampleRate, const std::vector<float>& preCoeffs,
+                                             const std::vector<float>& postCoeffs);
+    BiquadIIRLowPassFilter(float sampleRate, std::vector<float>&& preCoeffs,
+                                             std::vector<float>&& postCoeffs);
 
-    float applyFilter(std::vector<float>& buffer) override;
+    float applyFilter(std::span<const float> buffer) override;
 
 protected:
     void calculateCoefficients() override;

@@ -1,4 +1,5 @@
 #include <vector>
+#include <span>
 #include <string>
 #include <stdexcept>
 #include <cmath>
@@ -19,15 +20,16 @@ void BaseFilter::setQ(float q) {
     calculateCoefficients();
 }
 
-float BaseFilter::getFreq() {
+float BaseFilter::getFreq() const {
     return freq;
 }
 
-float BaseFilter::getQ() {
+float BaseFilter::getQ() const {
     return q;
 }
 
-float BaseFilter::getWeightedSum(std::vector<float>& coeffs, std::vector<float>& buffer) {
+float BaseFilter::getWeightedSum(std::span<const float> coeffs,
+                                 std::span<const float> buffer) {
     if (buffer.size() < coeffs.size()) {
         throw std::invalid_argument(
             "Buffer size is too small (" + std::to_string(buffer.size()) +
@@ -35,20 +37,32 @@ float BaseFilter::getWeightedSum(std::vector<float>& coeffs, std::vector<float>&
     }
 
     float filteredSample = 0.f;
-
-    for (int i = 0; i < coeffs.size(); i++) {
-        int bufferIdx = buffer.size() - 1 - i;
+    for (size_t i = 0; i < coeffs.size(); i++) {
+        size_t bufferIdx = buffer.size() - 1 - i;
         filteredSample += coeffs[i] * buffer[bufferIdx];
     }
-
     return filteredSample;
+}
+
+void BaseFilter::applyFilterChunk(std::span<const float> in,
+                                  std::span<float> out) {
+    // Default impl: per-sample sliding window. Subclasses may override.
+    if (out.size() < in.size()) {
+        throw std::invalid_argument("applyFilterChunk: output too small");
+    }
+    for (size_t i = 0; i < in.size(); i++) {
+        out[i] = applyFilter(in.subspan(0, i + 1));
+    }
 }
 
 // FIRFilter
 FIRFilter::FIRFilter(float sampleRate, float freq, float q)
     : BaseFilter(sampleRate, freq, q) {}
 
-FIRFilter::FIRFilter(float sampleRate, std::vector<float> preCoeffs)
+FIRFilter::FIRFilter(float sampleRate, const std::vector<float>& preCoeffs)
+    : BaseFilter(sampleRate), preCoeffs(preCoeffs) {}
+
+FIRFilter::FIRFilter(float sampleRate, std::vector<float>&& preCoeffs)
     : BaseFilter(sampleRate), preCoeffs(std::move(preCoeffs)) {}
 
 // BasicFIRFilter
@@ -57,12 +71,17 @@ BasicFIRFilter::BasicFIRFilter(float sampleRate, float freq, float q)
     calculateCoefficients();
 }
 
-BasicFIRFilter::BasicFIRFilter(float sampleRate, std::vector<float> preCoeffs)
+BasicFIRFilter::BasicFIRFilter(float sampleRate, const std::vector<float>& preCoeffs)
+    : FIRFilter(sampleRate, preCoeffs) {
+    calculateFreqAndQ();
+}
+
+BasicFIRFilter::BasicFIRFilter(float sampleRate, std::vector<float>&& preCoeffs)
     : FIRFilter(sampleRate, std::move(preCoeffs)) {
     calculateFreqAndQ();
 }
 
-float BasicFIRFilter::applyFilter(std::vector<float>& buffer) {
+float BasicFIRFilter::applyFilter(std::span<const float> buffer) {
     return getWeightedSum(preCoeffs, buffer);
 }
 
@@ -78,8 +97,19 @@ void BasicFIRFilter::calculateFreqAndQ() {
 IIRFilter::IIRFilter(float sampleRate, float freq, float q)
     : BaseFilter(sampleRate, freq, q), outputHistory(2) {}
 
-IIRFilter::IIRFilter(float sampleRate, std::vector<float> preCoeffs, std::vector<float> postCoeffs)
-    : BaseFilter(sampleRate), outputHistory(2), preCoeffs(std::move(preCoeffs)), postCoeffs(std::move(postCoeffs)) {}
+IIRFilter::IIRFilter(float sampleRate, const std::vector<float>& preCoeffs,
+                                       const std::vector<float>& postCoeffs)
+    : BaseFilter(sampleRate),
+      preCoeffs(preCoeffs),
+      postCoeffs(postCoeffs),
+      outputHistory(2) {}
+
+IIRFilter::IIRFilter(float sampleRate, std::vector<float>&& preCoeffs,
+                                       std::vector<float>&& postCoeffs)
+    : BaseFilter(sampleRate),
+      preCoeffs(std::move(preCoeffs)),
+      postCoeffs(std::move(postCoeffs)),
+      outputHistory(2) {}
 
 // BiquadIIRLowPassFilter
 BiquadIIRLowPassFilter::BiquadIIRLowPassFilter(float sampleRate, float freq, float q)
@@ -87,17 +117,26 @@ BiquadIIRLowPassFilter::BiquadIIRLowPassFilter(float sampleRate, float freq, flo
     calculateCoefficients();
 }
 
-BiquadIIRLowPassFilter::BiquadIIRLowPassFilter(float sampleRate, std::vector<float> preCoeffs, std::vector<float> postCoeffs)
+BiquadIIRLowPassFilter::BiquadIIRLowPassFilter(float sampleRate,
+                                               const std::vector<float>& preCoeffs,
+                                               const std::vector<float>& postCoeffs)
+    : IIRFilter(sampleRate, preCoeffs, postCoeffs) {
+    calculateFreqAndQ();
+}
+
+BiquadIIRLowPassFilter::BiquadIIRLowPassFilter(float sampleRate,
+                                               std::vector<float>&& preCoeffs,
+                                               std::vector<float>&& postCoeffs)
     : IIRFilter(sampleRate, std::move(preCoeffs), std::move(postCoeffs)) {
     calculateFreqAndQ();
 }
 
-float BiquadIIRLowPassFilter::applyFilter(std::vector<float>& buffer) {
-    auto history = outputHistory.getNSamples(postCoeffs.size());
-    float output = getWeightedSum(preCoeffs, buffer) - getWeightedSum(postCoeffs, history);
-
+float BiquadIIRLowPassFilter::applyFilter(std::span<const float> buffer) {
+    // Zero-copy peek into the mirror FIFO — no allocation per sample.
+    std::span<const float> history = outputHistory.peekNSamples(static_cast<int>(postCoeffs.size()));
+    float output = getWeightedSum(preCoeffs, buffer)
+                 - getWeightedSum(postCoeffs, history);
     outputHistory.addSample(output);
-
     return output;
 }
 

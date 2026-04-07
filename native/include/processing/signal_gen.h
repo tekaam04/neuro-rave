@@ -1,9 +1,11 @@
 #pragma once
 
 #include <vector>
+#include <span>
 #include <string>
 #include <functional>
 #include "fifo.h"
+#include "channel_array.h"
 #include <stdexcept>
 
 enum SIGNAL_TYPE {
@@ -19,9 +21,15 @@ float dbToLinear(float amplitudeDB);
 
 float linearToDB(float amplitudeLin);
 
+void normalizeNumbers(std::span<const float> in,
+                      std::span<float> out);
+
+float getWeightedAverage(std::span<const float> values,
+                         std::span<const float> weights);
+
 class Oscillator {
 public:
-    Oscillator(float sampleRate, float freq = 440.f, float amplitudeLin = 0.5, float phase = 0.f, SIGNAL_TYPE signalType=SINE, std::string name = "");
+    Oscillator(float sampleRate, float freq = 440.f, float amplitudeLin = 0.5, float phase = 0.f, SIGNAL_TYPE signalType = SINE, const std::string& name = "");
     float sampleRate;
     float freq;
     float phase;
@@ -30,7 +38,8 @@ public:
     std::string name;
 
     float generateWaveSample();
-    std::vector<float> generateWaveChunk(int nSamples);
+    void generateWaveChunk(std::span<float> out);
+
 protected:
     float generateSine();
     float generateSquare();
@@ -38,7 +47,7 @@ protected:
     float generateTriangle();
     float generateWhiteNoise();
     float generatePinkNoise();
-    
+
 private:
     using GeneratorFunc = float (Oscillator::*)();
     static constexpr GeneratorFunc generators[] = {
@@ -52,7 +61,7 @@ private:
     void updatePhase();
 };
 
-// handles multiple oscillators
+// Handles multiple oscillators.
 class Synthesizer {
 public:
     std::vector<Oscillator> oscillators;
@@ -60,57 +69,67 @@ public:
     float sampleRate;
 
     Synthesizer(float sampleRate, float amplitudeLin);
-    Synthesizer(std::vector<Oscillator> oscillators, float sampleRate, float amplitudeLin);
+    Synthesizer(const std::vector<Oscillator>& oscillators, float sampleRate, float amplitudeLin);
+    Synthesizer(std::vector<Oscillator>&& oscillators, float sampleRate, float amplitudeLin);
 
-    void addOscillator(Oscillator oscillator);
+    void addOscillator(const Oscillator& oscillator);
+    void addOscillator(Oscillator&& oscillator);
 
+    template<typename... Args>
+    Oscillator& emplaceOscillator(Args&&... args) {
+        Oscillator& osc = oscillators.emplace_back(std::forward<Args>(args)...);
+        invalidateCache();
+        return osc;
+    }
 
-    std::vector<float> generateSignalsSample();
-    std::vector<std::vector<float>> generateSignalsChunk(int nSamples);
+    // Hot-path generators — caller provides the output storage.
+    void generateSignalsSample(std::span<float> out);                // out.size() == nOsc
+    void generateSignalsChunk(const ChannelArrayView& out);                 // one channel per oscillator
 
-    // gets weighted average of all signals
-    float generateCombinedSample(bool weightOscEqually=false);
-    std::vector<float> generateCombinedChunk(int nSamples, bool weightOscEqually=false);
+    // Weighted average across oscillators.
+    float generateCombinedSample(bool weightOscEqually = false);
+    void generateCombinedChunk(std::span<float> out, bool weightOscEqually = false);
 
     int getNumberOscillators();
 
-    // helpers — predicate-based filtering
-    std::vector<Oscillator*> getOscillatorsByField(std::function<bool(const Oscillator&)> predicate);
-    std::vector<int> getOscillatorIdxByField(std::function<bool(const Oscillator&)> predicate);
+    // Predicate-based filtering. Caller provides reusable output vectors.
+    void getOscillatorsByField(const std::function<bool(const Oscillator&)>& predicate,
+                               std::vector<Oscillator*>& out);
+    void getOscillatorIdxByField(const std::function<bool(const Oscillator&)>& predicate,
+                                 std::vector<int>& out);
 
-    // field extraction
+    // Field extraction — caller-provided output span.
     template<typename T>
-    std::vector<T> getOscillatorFields(std::function<T(const Oscillator&)> getter) {
-        std::vector<T> result(oscillators.size());
-        for (int i = 0; i < oscillators.size(); i++) {
-            result[i] = getter(oscillators[i]);
+    void getOscillatorFields(const std::function<T(const Oscillator&)>& getter,
+                             std::span<T> out) {
+        for (size_t i = 0; i < oscillators.size(); i++) {
+            out[i] = getter(oscillators[i]);
         }
-        return result;
     }
 
-    // convenience: generate signals for oscillators matching a predicate
-    std::vector<std::vector<float>> generateSignalsByField(std::function<bool(const Oscillator&)> predicate, int nSamples);
+    // Generate one channel per matching oscillator into the provided view.
+    // Caller is responsible for sizing the view to match the number of matches.
+    void generateSignalsByField(const std::function<bool(const Oscillator&)>& predicate,
+                                const ChannelArrayView& out);
 
     // --- standardized field queries ---
 
-    // by name
     Oscillator* getOscillatorByName(const std::string& name);
-    std::vector<Oscillator*> getOscillatorsByNames(const std::vector<std::string>& names);
-    std::vector<std::vector<float>> generateSignalsByNames(const std::vector<std::string>& names, int nSamples);
+    void getOscillatorsByNames(const std::vector<std::string>& names,
+                               std::vector<Oscillator*>& out);
 
-    // by signal type
-    std::vector<Oscillator*> getOscillatorsByType(SIGNAL_TYPE type);
+    void getOscillatorsByType(SIGNAL_TYPE type, std::vector<Oscillator*>& out);
 
-    // by frequency range
-    std::vector<Oscillator*> getOscillatorsByFreqRange(float minFreq, float maxFreq);
+    void getOscillatorsByFreqRange(float minFreq, float maxFreq,
+                                   std::vector<Oscillator*>& out);
 
-    // field getters (cached)
-    std::vector<std::string> getOscillatorNames();
-    std::vector<float> getOscillatorFreqs();
-    std::vector<float> getOscillatorAmplitudes();
-    std::vector<float> getNormalizedAmplitudes();
+    // Cached field getters — return const refs to internal cache (no copy).
+    const std::vector<std::string>& getOscillatorNames();
+    const std::vector<float>& getOscillatorFreqs();
+    const std::vector<float>& getOscillatorAmplitudes();
+    const std::vector<float>& getNormalizedAmplitudes();
 
-    // call after modifying oscillator fields directly
+    // Call after modifying oscillator fields directly.
     void invalidateCache();
 
 private:
@@ -123,5 +142,3 @@ private:
 
     void rebuildCache();
 };
-
-float getWeightedAverage(std::vector<float> numbers);

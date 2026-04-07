@@ -1,10 +1,12 @@
 #include <vector>
+#include <span>
 #include <string>
 #include <stdexcept>
+#include <algorithm>
 #include "fifo.h"
 
 bool isPowerOfTwo(int n) {
-    return (n != 0) && (n & (n - 1) == 0);
+    return (n != 0) && ((n & (n - 1)) == 0);
 }
 
 int secondsToSamples(float seconds, int sampleRate) {
@@ -12,14 +14,14 @@ int secondsToSamples(float seconds, int sampleRate) {
 }
 
 float samplesToSeconds(int samples, int sampleRate) {
-     return samples / sampleRate;
+     return samples / float(sampleRate);
 }
 
-void applyWindow(std::vector<std::vector<float>>& data, std::string windowType);
+void applyWindow(const ChannelArrayView& data, const std::string& windowType);
 
 // FIFO base class
 FIFO::FIFO(int size, const std::string& channelName)
-    : size(size), channelName(channelName), isFull(false), writeIdx(0), data(size, 0.f) {}
+    : size(size), channelName(channelName), isFull(false), data(size, 0.f), writeIdx(0) {}
 
 void FIFO::validateRange(int begin, int end, int maxSize, const std::string& name) {
     if (begin < 0 || end > maxSize || begin > end) {
@@ -29,33 +31,33 @@ void FIFO::validateRange(int begin, int end, int maxSize, const std::string& nam
     }
 }
 
-void FIFO::writeDataByRange(std::vector<float>& source,
+void FIFO::writeDataByRange(std::span<const float> source,
                              int sourceBegin, int sourceEnd,
                              int dataBegin) {
-    if (sourceEnd == -1) sourceEnd = source.size();
+    if (sourceEnd == -1) sourceEnd = static_cast<int>(source.size());
     int copyLen = sourceEnd - sourceBegin;
 
-    validateRange(sourceBegin, sourceEnd, source.size(), "source");
-    validateRange(dataBegin, dataBegin + copyLen, data.size(), "data");
+    validateRange(sourceBegin, sourceEnd, static_cast<int>(source.size()), "source");
+    validateRange(dataBegin, dataBegin + copyLen, static_cast<int>(data.size()), "data");
 
     std::copy(source.begin() + sourceBegin, source.begin() + sourceEnd,
               data.begin() + dataBegin);
 }
 
-void FIFO::readDataByRange(std::vector<float>& result,
+void FIFO::readDataByRange(std::span<float> result,
                             int dataBegin, int dataEnd,
-                            int resultBegin) {
-    if (dataEnd == -1) dataEnd = data.size();
+                            int resultBegin) const {
+    if (dataEnd == -1) dataEnd = static_cast<int>(data.size());
     int copyLen = dataEnd - dataBegin;
 
-    validateRange(dataBegin, dataEnd, data.size(), "data");
-    validateRange(resultBegin, resultBegin + copyLen, result.size(), "result");
+    validateRange(dataBegin, dataEnd, static_cast<int>(data.size()), "data");
+    validateRange(resultBegin, resultBegin + copyLen, static_cast<int>(result.size()), "result");
 
     std::copy(data.begin() + dataBegin, data.begin() + dataEnd,
               result.begin() + resultBegin);
 }
 
-int FIFO::getFilledSize() {
+int FIFO::getFilledSize() const {
     return isFull ? size : writeIdx;
 }
 
@@ -69,8 +71,8 @@ void CircularFIFO::addSample(float sample) {
     if (writeIdx == 0) isFull = true;
 }
 
-void CircularFIFO::addChunk(std::vector<float>& chunk) {
-    int nSamples = chunk.size();
+void CircularFIFO::addChunk(std::span<const float> chunk) {
+    int nSamples = static_cast<int>(chunk.size());
 
     if (nSamples > size) {
         throw std::invalid_argument(
@@ -80,7 +82,7 @@ void CircularFIFO::addChunk(std::vector<float>& chunk) {
     }
 
     if (nSamples == size) {
-        data = chunk;
+        writeDataByRange(chunk, 0, nSamples, 0);
         writeIdx = 0;
         isFull = true;
         return;
@@ -99,39 +101,42 @@ void CircularFIFO::addChunk(std::vector<float>& chunk) {
     if (end >= size) isFull = true;
 }
 
-std::vector<float> CircularFIFO::getData() {
-    int filled = getFilledSize();
-    std::vector<float> result(filled, 0.f);
-    if (!isFull) {
-        readDataByRange(result, 0, writeIdx, 0);
-    } else {
-        int tail = size - writeIdx;
-        readDataByRange(result, writeIdx, -1, 0);
-        readDataByRange(result, 0, writeIdx, tail);
-    }
-    return result;
-}
-
-std::vector<float> CircularFIFO::getNSamples(int n) {
+void CircularFIFO::readNSamples(std::span<float> out) {
+    int n = static_cast<int>(out.size());
     int filled = getFilledSize();
     if (n > filled) n = filled;
 
-    std::vector<float> result(n, 0.f);
     int start = (writeIdx - n + size) % size;
 
     if (start + n <= size) {
-        readDataByRange(result, start, start + n, 0);
+        readDataByRange(out, start, start + n, 0);
     } else {
         int tail = size - start;
-        readDataByRange(result, start, size, 0);
-        readDataByRange(result, 0, n - tail, tail);
+        readDataByRange(out, start, size, 0);
+        readDataByRange(out, 0, n - tail, tail);
     }
-    return result;
 }
 
-// MirrorCircularFIFO
+void CircularFIFO::readAll(std::span<float> out) {
+    int filled = getFilledSize();
+    if (static_cast<int>(out.size()) < filled) {
+        throw std::invalid_argument("readAll output buffer too small");
+    }
+    if (!isFull) {
+        readDataByRange(out, 0, writeIdx, 0);
+    } else {
+        int tail = size - writeIdx;
+        readDataByRange(out, writeIdx, size, 0);
+        readDataByRange(out, 0, writeIdx, tail);
+    }
+}
+
+// MirrorCircularFIFO — `size` is the logical capacity. The underlying `data`
+// vector is sized to 2*size so the n most-recent samples are always contiguous.
 MirrorCircularFIFO::MirrorCircularFIFO(int size, const std::string& channelName)
-    : FIFO(size * 2, channelName) {}
+    : FIFO(size, channelName) {
+    data.assign(static_cast<size_t>(size) * 2, 0.f);
+}
 
 void MirrorCircularFIFO::addSample(float sample) {
     data[writeIdx] = sample;
@@ -140,8 +145,8 @@ void MirrorCircularFIFO::addSample(float sample) {
     if (writeIdx == 0) isFull = true;
 }
 
-void MirrorCircularFIFO::addChunk(std::vector<float>& chunk) {
-    int nSamples = chunk.size();
+void MirrorCircularFIFO::addChunk(std::span<const float> chunk) {
+    int nSamples = static_cast<int>(chunk.size());
 
     if (nSamples > size) {
         throw std::invalid_argument(
@@ -151,8 +156,8 @@ void MirrorCircularFIFO::addChunk(std::vector<float>& chunk) {
     }
 
     if (nSamples == size) {
-        writeDataByRange(chunk, 0, -1, 0);
-        writeDataByRange(chunk, 0, -1, size);
+        writeDataByRange(chunk, 0, nSamples, 0);
+        writeDataByRange(chunk, 0, nSamples, size);
         writeIdx = 0;
         isFull = true;
         return;
@@ -160,8 +165,8 @@ void MirrorCircularFIFO::addChunk(std::vector<float>& chunk) {
 
     int end = writeIdx + nSamples;
     if (end <= size) {
-        writeDataByRange(chunk, 0, -1, writeIdx);
-        writeDataByRange(chunk, 0, -1, writeIdx + size);
+        writeDataByRange(chunk, 0, nSamples, writeIdx);
+        writeDataByRange(chunk, 0, nSamples, writeIdx + size);
     } else {
         int first = size - writeIdx;
         writeDataByRange(chunk, 0, first, writeIdx);
@@ -174,23 +179,27 @@ void MirrorCircularFIFO::addChunk(std::vector<float>& chunk) {
     if (end >= size) isFull = true;
 }
 
-std::vector<float> MirrorCircularFIFO::getNSamples(int n) {
+std::span<const float> MirrorCircularFIFO::peekNSamples(int n) const {
     int filled = getFilledSize();
     if (n > filled) n = filled;
-
-    std::vector<float> result(n, 0.f);
     int start = writeIdx + size - n;
-    readDataByRange(result, start, start + n, 0);
-    return result;
+    return std::span<const float>(data.data() + start, static_cast<size_t>(n));
 }
 
-std::vector<float> MirrorCircularFIFO::getData() {
+void MirrorCircularFIFO::readNSamples(std::span<float> out) {
+    int n = static_cast<int>(out.size());
+    auto src = peekNSamples(n);
+    std::copy(src.begin(), src.end(), out.begin());
+}
+
+void MirrorCircularFIFO::readAll(std::span<float> out) {
     int filled = getFilledSize();
-    std::vector<float> result(filled, 0.f);
-    if (!isFull) {
-        readDataByRange(result, 0, writeIdx, 0);
-    } else {
-        readDataByRange(result, writeIdx, writeIdx + size, 0);
+    if (static_cast<int>(out.size()) < filled) {
+        throw std::invalid_argument("readAll output buffer too small");
     }
-    return result;
+    if (!isFull) {
+        readDataByRange(out, 0, writeIdx, 0);
+    } else {
+        readDataByRange(out, writeIdx, writeIdx + size, 0);
+    }
 }

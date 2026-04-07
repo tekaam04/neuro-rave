@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(neuro_rave_native C CXX)
 
 set(CMAKE_C_STANDARD   11)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 # ── liblsl ────────────────────────────────────────────────────────────────────
 # Try the CMake package first (works when liblsl was installed via CMake or Homebrew).
