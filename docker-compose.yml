@@ -34,6 +34,21 @@ services:
       - ./get_spotify_refresh_token.py:/app/get_spotify_refresh_token.py
     restart: unless-stopped
 
+  native:
+    build: ./native
+    profiles: ["native"]
+    ports:
+      - "8734:8733"
+    environment:
+      - BIOSEMI_HOST=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config:/app/config
+    # Run bridge in background, then ws_server in foreground (same container = same LSL multicast scope)
+    command: sh -c "neuro_lsl_bridge & sleep 2 && neuro_ws_server"
+    restart: unless-stopped
+
   dashboard:
     build: ./dashboard
     ports:

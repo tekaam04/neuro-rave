@@ -43,7 +43,7 @@ static int lws_callback(struct lws*               wsi,
 
 static const struct lws_protocols g_protocols[] = {
     { "eeg-raw", lws_callback, 0, 0, 0, nullptr, 0 },
-    LWS_PROTOCOL_LIST_TERM
+    { nullptr, nullptr, 0, 0, 0, nullptr, 0 }
 };
 
 
@@ -254,6 +254,7 @@ void EEGWebSocketServer::run()
 static volatile bool g_running = true;
 static void on_signal(int) { g_running = false; }
 
+#ifndef NEURO_RAVE_LIB
 int main(int argc, char* argv[])
 {
     signal(SIGINT,  on_signal);
@@ -272,3 +273,4 @@ int main(int argc, char* argv[])
 
     return 0;
 }
+#endif

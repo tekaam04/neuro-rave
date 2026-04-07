@@ -37,7 +37,7 @@ from src.music_gen.spotify_controller import NeuroFeatures, propose_mood
 from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 from src.streaming.lslbridge import LSLConsumer
 from src.streaming.packets import RawPacket, FeaturesPacket
-from src.processing.fifo import MirrorCircleBuffer
+from src.processing.fifo import MirrorCircleFIFO
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class EEGWebSocketServer:
 
         self._clients:  Set[WebSocket]     = set()
         self._consumer: LSLConsumer | None = None
-        self._features_buf = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+        self._features_buf = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
         self._features_dirty = False
         self._feat_alpha_hist: list[np.ndarray] = []
         self._spotify_pipeline = SpotifyFeaturePipeline()

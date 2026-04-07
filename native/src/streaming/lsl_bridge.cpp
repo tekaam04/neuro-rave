@@ -244,6 +244,7 @@ void LSLBridge::stream_loop(TCPSource*           tcp,
 static volatile bool g_running = true;
 static void on_signal(int) { g_running = false; }
 
+#ifndef NEURO_RAVE_LIB
 int main(int argc, char* argv[])
 {
     signal(SIGINT,  on_signal);
@@ -273,3 +274,4 @@ int main(int argc, char* argv[])
 
     return 0;
 }
+#endif

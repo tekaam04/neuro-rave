@@ -2,7 +2,7 @@
   "N_CHANNELS":       8,
   "SAMPLE_RATE":      512,
   "WINDOW_SIZE":      512,
-  "SIMULATE":         false,
+  "SIMULATE":         true,
 
   "FOCUS_THETA_BETA_LOW":  0.10,
   "FOCUS_THETA_BETA_HIGH": 0.42,
