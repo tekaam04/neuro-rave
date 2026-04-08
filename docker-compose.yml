@@ -20,6 +20,7 @@ services:
       # Playback: context | recommendations | pool (CSV track pool, no /recommendations API).
       - SPOTIFY_PLAYBACK_MODE=${SPOTIFY_PLAYBACK_MODE:-context}
       - SPOTIFY_TRACK_POOL_CSV=${SPOTIFY_TRACK_POOL_CSV:-}
+      - SPOTIFY_MIN_SWITCH_S=${SPOTIFY_MIN_SWITCH_S:-}
       - SPOTIFY_POOL_MIN_INTERVAL_S=${SPOTIFY_POOL_MIN_INTERVAL_S:-}
       - SPOTIFY_SEED_GENRES=${SPOTIFY_SEED_GENRES:-}
       - SPOTIFY_DEVICE_ID=${SPOTIFY_DEVICE_ID:-}

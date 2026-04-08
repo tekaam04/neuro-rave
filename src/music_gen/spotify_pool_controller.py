@@ -48,7 +48,7 @@ class SpotifyNeuroPoolController:
         self._pool = pool
         self._last_play_at: float = 0.0
         self._min_interval_s: float = float(
-            os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "45") or "45"
+            os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "10") or "10"
         )
         self._min_interval_s = max(5.0, self._min_interval_s)
         try:

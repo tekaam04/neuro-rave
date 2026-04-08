@@ -322,7 +322,7 @@ if __name__ == "__main__":
                     "Interval=%.0fs (SPOTIFY_POOL_MIN_INTERVAL_S).",
                     pool.size,
                     csv_path,
-                    float(os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "45") or "45"),
+                    float(os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "10") or "10"),
                 )
         else:
             mood_playlists = resolve_mood_playlists()

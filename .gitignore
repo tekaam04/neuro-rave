@@ -1,9 +1,6 @@
 # Environment variables (contains sensitive tokens)
 .env
 
-# Optional large CSV track pool (copy from TidyTuesday / Kaggle); keep out of git by default
-config/track_pool.csv
-
 # Python
 __pycache__/
 *.pyc

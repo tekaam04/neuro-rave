@@ -591,8 +591,8 @@ class SpotifyNeuroController:
         self._mood_playlists = mood_playlists
         self._current_mood: Optional[str] = None
         self._last_switch_at: float = 0.0
-        # Minimum seconds between playlist changes. Default 0 = switch as soon as mood changes.
-        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "0") or "0")
+        # Minimum seconds between playlist changes (default 10s; SPOTIFY_MIN_SWITCH_S=0 to disable).
+        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "10") or "10")
         mode = os.environ.get("SPOTIFY_MOOD_CONTEXT_MODE", "random").strip().lower()
         if mode not in ("random", "round_robin", "first"):
             mode = "random"
@@ -658,7 +658,7 @@ class SpotifyNeuroRecommendationController:
         self._seed_genres = [g.strip().lower() for g in seed_genres if g.strip()][:5]
         self._current_mood: Optional[str] = None
         self._last_switch_at: float = 0.0
-        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "0") or "0")
+        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "10") or "10")
         try:
             self._rec_limit = int(os.environ.get("SPOTIFY_RECOMMENDATIONS_LIMIT", "20") or "20")
         except ValueError:

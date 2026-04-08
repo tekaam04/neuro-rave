@@ -236,7 +236,7 @@ Use [Spotify’s allowed `seed_genres` values](https://developer.spotify.com/doc
 
 **Limitation:** Spotify’s **`GET /v1/recommendations`** often returns **404** or fails for **many newer or standard developer apps** (API access is restricted for some accounts). If recommendations never work, **stay on context mode**—playlists do not depend on that endpoint.
 
-Each time the **mood bucket** changes (optional cooldown **`SPOTIFY_MIN_SWITCH_S`**; default **0**), recommendations mode maps smoothed **`energy`** and **`focus`** to `target_energy`, `target_valence`, and `target_tempo`, then plays a **random** track from the API response.
+Each time the **mood bucket** changes (cooldown **`SPOTIFY_MIN_SWITCH_S`**; default **10** seconds, set **`0`** for immediate switches), recommendations mode maps smoothed **`energy`** and **`focus`** to `target_energy`, `target_valence`, and `target_tempo`, then plays a **random** track from the API response.
 
 Other optional **`.env`** knobs: `SPOTIFY_TARGET_TEMPO_MIN`, `SPOTIFY_TARGET_TEMPO_MAX`, `SPOTIFY_RECOMMENDATIONS_LIMIT`.
 
@@ -258,7 +258,7 @@ SPOTIFY_PLAYBACK_MODE=pool
 
 ```env
 # SPOTIFY_TRACK_POOL_CSV=/app/config/track_pool.csv   # default: ./config/track_pool.csv
-# SPOTIFY_POOL_MIN_INTERVAL_S=45                      # default 45; min 5s enforced
+# SPOTIFY_POOL_MIN_INTERVAL_S=10                      # default 10; min 5s enforced in code
 # SPOTIFY_POOL_TOP_K=8
 # SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=0                  # 1 = only change track when voted mood changes
 # SPOTIFY_POOL_HISTORY=24
@@ -266,7 +266,7 @@ SPOTIFY_PLAYBACK_MODE=pool
 # SPOTIFY_POOL_WEIGHT_ENERGY=1  SPOTIFY_POOL_WEIGHT_VALENCE=1  SPOTIFY_POOL_WEIGHT_TEMPO=0.85
 ```
 
-**`SPOTIFY_POOL_MIN_INTERVAL_S`:** minimum seconds between new track picks (default **45**); lower for more frequent changes (watch rate limits / UX). **`SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=1`:** only change tracks when the **voted mood** changes (see earlier Q&A: playback end is not auto-detected).
+**`SPOTIFY_POOL_MIN_INTERVAL_S`:** minimum seconds between new track picks (default **10**); lower for more frequent changes (watch rate limits / UX). **`SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=1`:** only change tracks when the **voted mood** changes (see earlier Q&A: playback end is not auto-detected).
 
 **Command-line mode (overrides `SPOTIFY_PLAYBACK_MODE` for this run)**
 
@@ -287,7 +287,7 @@ Docker example: `docker compose run --rm -e ... neuro-rave python main.py --spot
 
 **4. Simulated EEG + Spotify (`main.py`)**
 
-With **`SIMULATE=1`** in `.env`, **`docker compose up`** runs **`main.py`** with **simulated EEG** (see the Docker section above). The simulator **rotates** band-limited waveforms: **calm → focus → hype**, **`SIM_PHASE_SECONDS`** each (from `constants.json`, default 30), so moods and playlists should follow over time. Set **`SPOTIFY_MIN_SWITCH_S`** in `.env` only if you want a **minimum delay** between Spotify context changes (default **0** = switch as soon as the voted mood changes).
+With **`SIMULATE=1`** in `.env`, **`docker compose up`** runs **`main.py`** with **simulated EEG** (see the Docker section above). The simulator **rotates** band-limited waveforms: **calm → focus → hype**, **`SIM_PHASE_SECONDS`** each (from `constants.json`, default 30), so moods and playlists should follow over time. **`SPOTIFY_MIN_SWITCH_S`** sets a **minimum delay** between Spotify context/recommendation switches (default **10** seconds; **`0`** = switch as soon as the voted mood changes).
 
 ```bash
 docker compose run --rm -e SIMULATE=1 neuro-rave python main.py
