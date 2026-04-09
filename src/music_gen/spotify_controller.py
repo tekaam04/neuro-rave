@@ -345,6 +345,67 @@ class SpotifyClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_player_state(self) -> Optional[Dict[str, Any]]:
+        """Return current player state from ``GET /me/player`` or ``None`` when idle."""
+        resp = requests.get(
+            f"{self.API_BASE_URL}/me/player",
+            headers=self._headers(),
+            timeout=10,
+        )
+        if resp.status_code == 204:
+            return None
+        if resp.status_code != 200:
+            logger.debug("GET /me/player returned %s", resp.status_code)
+            return None
+        try:
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def set_volume(self, percent: int, device_id: Optional[str] = None) -> None:
+        """Set Spotify device volume in percent [0,100]."""
+        params: Dict[str, Any] = {"volume_percent": int(max(0, min(100, percent)))}
+        pinned = self._effective_device_id(device_id)
+        if pinned:
+            params["device_id"] = pinned
+        resp = requests.put(
+            f"{self.API_BASE_URL}/me/player/volume",
+            params=params,
+            headers=self._headers(),
+            timeout=10,
+        )
+        if resp.status_code not in (200, 202, 204):
+            raise RuntimeError(
+                f"Spotify volume request failed: {resp.status_code} {resp.text}"
+            )
+
+    def _fade_volume(
+        self,
+        from_percent: int,
+        to_percent: int,
+        duration_s: float,
+        device_id: Optional[str] = None,
+    ) -> None:
+        steps = max(2, min(24, int(float(os.environ.get("SPOTIFY_FADE_STEPS", "10") or "10"))))
+        dur = max(0.0, float(duration_s))
+        if dur <= 1e-3:
+            self.set_volume(to_percent, device_id=device_id)
+            return
+        start = max(0, min(100, int(from_percent)))
+        end = max(0, min(100, int(to_percent)))
+        for i in range(1, steps + 1):
+            t = i / steps
+            # Smoothstep curve sounds less abrupt than linear.
+            curve = t * t * (3.0 - 2.0 * t)
+            vol = int(round(start + (end - start) * curve))
+            try:
+                self.set_volume(vol, device_id=device_id)
+            except Exception:
+                # Some devices reject volume API; continue with hard switch.
+                return
+            time.sleep(dur / steps)
+
     def set_shuffle(self, state: bool, device_id: Optional[str] = None) -> None:
         """Enable or disable shuffle for the current (or given) device."""
         params: Dict[str, str] = {"state": "true" if state else "false"}
@@ -478,6 +539,22 @@ class SpotifyClient:
         if use_shuffle:
             self.set_shuffle(True, device_id=shuffle_dev)
 
+    def start_playlist_smooth(
+        self,
+        context_uri: str,
+        device_id: Optional[str] = None,
+    ) -> None:
+        """Soft handoff: fade down -> switch context -> fade up."""
+        fade_s = max(0.0, float(os.environ.get("SPOTIFY_TRANSITION_SECONDS", "6") or "6"))
+        state = self.get_player_state() or {}
+        dev = (state.get("device") or {}) if isinstance(state.get("device"), dict) else {}
+        current_vol = int(dev.get("volume_percent") or 70)
+        target_vol = max(15, min(100, current_vol))
+        did = self._effective_device_id(device_id) or (str(dev.get("id")) if dev.get("id") else None)
+        self._fade_volume(target_vol, max(0, target_vol - 45), duration_s=fade_s * 0.5, device_id=did)
+        self.start_playlist(context_uri, device_id=did)
+        self._fade_volume(max(0, target_vol - 45), target_vol, duration_s=fade_s * 0.5, device_id=did)
+
     def play_track_uris(
         self,
         uris: List[str],
@@ -523,6 +600,22 @@ class SpotifyClient:
             raise RuntimeError(
                 f"Spotify playback request failed: {resp.status_code} {resp.text}"
             )
+
+    def play_track_uris_smooth(
+        self,
+        uris: List[str],
+        device_id: Optional[str] = None,
+    ) -> None:
+        """Soft handoff: fade down -> switch track -> fade up."""
+        fade_s = max(0.0, float(os.environ.get("SPOTIFY_TRANSITION_SECONDS", "6") or "6"))
+        state = self.get_player_state() or {}
+        dev = (state.get("device") or {}) if isinstance(state.get("device"), dict) else {}
+        current_vol = int(dev.get("volume_percent") or 70)
+        target_vol = max(15, min(100, current_vol))
+        did = self._effective_device_id(device_id) or (str(dev.get("id")) if dev.get("id") else None)
+        self._fade_volume(target_vol, max(0, target_vol - 45), duration_s=fade_s * 0.5, device_id=did)
+        self.play_track_uris(uris, device_id=did)
+        self._fade_volume(max(0, target_vol - 45), target_vol, duration_s=fade_s * 0.5, device_id=did)
 
     def get_playable_track_uris(self, uris: List[str]) -> set[str]:
         """Return subset of ``uris`` that are currently playable in the configured market.
@@ -650,7 +743,16 @@ class SpotifyNeuroController:
         if not context_uri:
             return
 
-        self._spotify.start_playlist(context_uri, device_id=device_id)
+        smooth = os.environ.get("SPOTIFY_SMOOTH_TRANSITIONS", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        if smooth:
+            self._spotify.start_playlist_smooth(context_uri, device_id=device_id)
+        else:
+            self._spotify.start_playlist(context_uri, device_id=device_id)
         self._current_mood = mood
         self._last_switch_at = now
 

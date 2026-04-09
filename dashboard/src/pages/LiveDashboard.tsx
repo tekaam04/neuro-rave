@@ -102,6 +102,28 @@ interface HistoryPoint {
   focus: number;
 }
 
+interface NowPlayingTrack {
+  name: string;
+  artists: string[];
+  album?: string | null;
+  image_url?: string | null;
+}
+
+interface DashboardPlayerState {
+  paused: boolean;
+  is_playing: boolean;
+  progress_ms?: number | null;
+  track?: NowPlayingTrack | null;
+}
+
+function formatDurationMs(ms?: number | null): string {
+  if (!ms || ms < 0) return "0:00";
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function TinyBarChart({
   history,
   metricKey,
@@ -163,6 +185,13 @@ export default function LiveDashboard() {
     "playlist",
   );
   const [spotifyTokenConnected, setSpotifyTokenConnected] = useState(false);
+  const [playbackPaused, setPlaybackPaused] = useState(false);
+  const [isSpotifyPlaying, setIsSpotifyPlaying] = useState(false);
+  const [nowPlaying, setNowPlaying] = useState<NowPlayingTrack | null>(null);
+  const [nowPlayingProgressMs, setNowPlayingProgressMs] = useState<number | null>(
+    null,
+  );
+  const [playerActionBusy, setPlayerActionBusy] = useState(false);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [spotifyLabels, setSpotifyLabels] = useState<Record<string, string>>(
     {},
@@ -206,6 +235,26 @@ export default function LiveDashboard() {
         else setPlaybackKind("playlist");
       })
       .catch(() => {});
+  }, [api]);
+
+  const fetchPlayerState = async () => {
+    const response = await fetch(`${api}/spotify/dashboard/player`);
+    if (!response.ok) return;
+    const data: DashboardPlayerState = await response.json();
+    setPlaybackPaused(Boolean(data.paused));
+    setIsSpotifyPlaying(Boolean(data.is_playing));
+    setNowPlaying(data.track ?? null);
+    setNowPlayingProgressMs(
+      typeof data.progress_ms === "number" ? data.progress_ms : null,
+    );
+  };
+
+  useEffect(() => {
+    fetchPlayerState().catch(() => {});
+    const id = window.setInterval(() => {
+      fetchPlayerState().catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
   }, [api]);
 
   useEffect(() => {
@@ -267,7 +316,9 @@ export default function LiveDashboard() {
           [
             {
               time: now,
-              text: `Playlist mode → context "${name}"`,
+              text: playbackPaused
+                ? `Playback paused — holding "${name}" until resume`
+                : `Playlist mode → context "${name}"`,
             },
             ...prev,
           ].slice(0, 8),
@@ -277,7 +328,9 @@ export default function LiveDashboard() {
           [
             {
               time: now,
-              text: `Pool mode → mood ${features.mood} (nearest track from CSV)`,
+              text: playbackPaused
+                ? `Playback paused — pool mode changes are locked`
+                : `Pool mode → mood ${features.mood} (nearest track from CSV)`,
             },
             ...prev,
           ].slice(0, 8),
@@ -285,7 +338,7 @@ export default function LiveDashboard() {
       }
     }
     prevMoodRef.current = features.mood;
-  }, [features, playbackKind, spotifyLabels]);
+  }, [features, playbackKind, playbackPaused, spotifyLabels]);
 
   const postPlaybackMode = async (mode: "playlist" | "pool") => {
     await fetch(`${api}/spotify/dashboard/playback-mode`, {
@@ -298,11 +351,62 @@ export default function LiveDashboard() {
 
   const onPlaylistMode = async () => {
     await postPlaybackMode("playlist");
-    navigate("/setup");
   };
 
   const onPoolMode = async () => {
     await postPlaybackMode("pool");
+  };
+
+  const onUpdatePlaylist = async () => {
+    navigate("/setup");
+  };
+
+  const onPausePlayback = async () => {
+    setPlayerActionBusy(true);
+    try {
+      const response = await fetch(`${api}/spotify/dashboard/pause`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        setPlaybackPaused(true);
+        setLogs((prev) =>
+          [
+            {
+              time: new Date().toLocaleTimeString(),
+              text: "Playback paused — auto-switching is locked",
+            },
+            ...prev,
+          ].slice(0, 8),
+        );
+      }
+    } finally {
+      setPlayerActionBusy(false);
+      fetchPlayerState().catch(() => {});
+    }
+  };
+
+  const onResumePlayback = async () => {
+    setPlayerActionBusy(true);
+    try {
+      const response = await fetch(`${api}/spotify/dashboard/resume`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        setPlaybackPaused(false);
+        setLogs((prev) =>
+          [
+            {
+              time: new Date().toLocaleTimeString(),
+              text: "Playback resumed — auto-switching unlocked",
+            },
+            ...prev,
+          ].slice(0, 8),
+        );
+      }
+    } finally {
+      setPlayerActionBusy(false);
+      fetchPlayerState().catch(() => {});
+    }
   };
 
   const connectSpotifyHref = `${api}/spotify/oauth/authorize`;
@@ -328,6 +432,10 @@ export default function LiveDashboard() {
           <StatusBadge
             text={`Spotify: ${playbackKind === "playlist" ? "playlist" : "pool"}`}
             color="#1d4ed8"
+          />
+          <StatusBadge
+            text={playbackPaused ? "Playback locked" : "Playback live"}
+            color={playbackPaused ? "#b45309" : "#16a34a"}
           />
         </div>
       </header>
@@ -403,11 +511,22 @@ export default function LiveDashboard() {
               : "Connect Spotify first to save a local refresh token and enable playback control."}
           </p>
           <div className="button-row">
-            <a className="toggle-btn" href={connectSpotifyHref}>
-              {spotifyTokenConnected
-                ? "Reconnect Spotify"
-                : "Connect Spotify (get token)"}
-            </a>
+            {spotifyTokenConnected ? (
+              <button className="toggle-btn" type="button" disabled>
+                Spotify connected
+              </button>
+            ) : (
+              <a className="toggle-btn" href={connectSpotifyHref}>
+                Connect Spotify (get token)
+              </a>
+            )}
+            <button
+              className="toggle-btn"
+              type="button"
+              onClick={() => void onUpdatePlaylist()}
+            >
+              Update playlist
+            </button>
             <button
               className={
                 playbackKind === "playlist"
@@ -428,6 +547,45 @@ export default function LiveDashboard() {
             >
               Pool mode
             </button>
+            <button
+              className="toggle-btn"
+              type="button"
+              disabled={playerActionBusy}
+              onClick={() =>
+                void (playbackPaused ? onResumePlayback() : onPausePlayback())
+              }
+            >
+              {playbackPaused ? "Resume playback" : "Pause playback"}
+            </button>
+          </div>
+        </div>
+
+        <div className="music-grid" style={{ marginBottom: 14 }}>
+          <div className="card">
+            <div className="card-label">Now playing</div>
+            <div className="big-text">{nowPlaying?.name ?? "No active track"}</div>
+            <div className="small-text">
+              {nowPlaying?.artists?.length
+                ? nowPlaying.artists.join(", ")
+                : "—"}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-label">Playback status</div>
+            <div className="big-text">
+              {playbackPaused
+                ? "Paused (locked)"
+                : isSpotifyPlaying
+                  ? "Playing"
+                  : "Idle"}
+            </div>
+            <div className="small-text">
+              Position: {formatDurationMs(nowPlayingProgressMs)}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-label">Album</div>
+            <div className="big-text">{nowPlaying?.album || "—"}</div>
           </div>
         </div>
 
@@ -445,7 +603,7 @@ export default function LiveDashboard() {
               <div className="card-label">Setup</div>
               <div className="small-text">
                 At the beginning, playlist mode is using the default playlist mapping; set your own
-                playlists above in the playlist mode button.
+                playlists above in the update playlist button.
               </div>
             </div>
           </div>

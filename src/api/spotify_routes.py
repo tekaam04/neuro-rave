@@ -19,6 +19,10 @@ from src.music_gen.dashboard_playback_mode import (
     read_dashboard_playback_mode,
     write_dashboard_playback_mode,
 )
+from src.music_gen.dashboard_playback_pause import (
+    read_dashboard_playback_paused,
+    write_dashboard_playback_paused,
+)
 from src.music_gen.spotify_mapping_store import (
     load_mood_playlists,
     parse_spotify_context_input,
@@ -119,8 +123,8 @@ def _oauth_callback_url() -> str:
 
 def _oauth_success_redirect() -> str:
     return (
-        os.environ.get("SPOTIFY_OAUTH_SUCCESS_URL", "http://localhost:5173/setup?spotify=connected").strip()
-        or "http://localhost:5173/setup?spotify=connected"
+        os.environ.get("SPOTIFY_OAUTH_SUCCESS_URL", "http://localhost:5173/").strip()
+        or "http://localhost:5173/"
     )
 
 
@@ -366,6 +370,27 @@ class DashboardPlaybackModeOut(BaseModel):
     mode: str
 
 
+class DashboardPlaybackPauseOut(BaseModel):
+    paused: bool
+
+
+class NowPlayingTrackOut(BaseModel):
+    id: Optional[str] = None
+    name: str
+    artists: List[str]
+    album: Optional[str] = None
+    image_url: Optional[str] = None
+    uri: Optional[str] = None
+    duration_ms: Optional[int] = None
+
+
+class DashboardPlayerOut(BaseModel):
+    paused: bool
+    is_playing: bool
+    progress_ms: Optional[int] = None
+    track: Optional[NowPlayingTrackOut] = None
+
+
 class MoodSlotDisplay(BaseModel):
     uri: str
     name: str
@@ -391,6 +416,61 @@ def _api_mode_label(stored: str) -> str:
     return "playlist" if stored == "context" else stored
 
 
+def _spotify_player_state(access_token: str) -> DashboardPlayerOut:
+    paused = read_dashboard_playback_paused()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    resp = requests.get(
+        f"{API_BASE_URL}/me/player/currently-playing",
+        headers=headers,
+        timeout=10,
+    )
+    if resp.status_code == 204:
+        return DashboardPlayerOut(paused=paused, is_playing=False, progress_ms=None, track=None)
+    if resp.status_code != 200:
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify currently playing failed: {detail}")
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = {}
+    data = payload if isinstance(payload, dict) else {}
+    item = data.get("item")
+    if not isinstance(item, dict):
+        return DashboardPlayerOut(
+            paused=paused,
+            is_playing=bool(data.get("is_playing", False)),
+            progress_ms=data.get("progress_ms"),
+            track=None,
+        )
+
+    artists: List[str] = []
+    for a in item.get("artists", []) or []:
+        if isinstance(a, dict) and a.get("name"):
+            artists.append(str(a["name"]))
+    images = ((item.get("album") or {}).get("images") or []) if isinstance(item.get("album"), dict) else []
+    image_url: Optional[str] = None
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict) and first.get("url"):
+            image_url = str(first["url"])
+
+    track = NowPlayingTrackOut(
+        id=str(item.get("id")) if item.get("id") else None,
+        name=str(item.get("name") or "Unknown"),
+        artists=artists,
+        album=str((item.get("album") or {}).get("name")) if isinstance(item.get("album"), dict) else None,
+        image_url=image_url,
+        uri=str(item.get("uri")) if item.get("uri") else None,
+        duration_ms=int(item.get("duration_ms")) if item.get("duration_ms") is not None else None,
+    )
+    return DashboardPlayerOut(
+        paused=paused,
+        is_playing=bool(data.get("is_playing", False)),
+        progress_ms=int(data.get("progress_ms")) if data.get("progress_ms") is not None else None,
+        track=track,
+    )
+
+
 @router.get("/dashboard/playback-mode", response_model=DashboardPlaybackModeOut)
 def get_dashboard_playback_mode_http() -> DashboardPlaybackModeOut:
     raw = read_dashboard_playback_mode()
@@ -409,6 +489,47 @@ def post_dashboard_playback_mode_http(
 ) -> DashboardPlaybackModeOut:
     stored = write_dashboard_playback_mode(body.mode)
     return DashboardPlaybackModeOut(mode=_api_mode_label(stored))
+
+
+@router.get("/dashboard/playback-pause", response_model=DashboardPlaybackPauseOut)
+def get_dashboard_playback_pause_http() -> DashboardPlaybackPauseOut:
+    return DashboardPlaybackPauseOut(paused=read_dashboard_playback_paused())
+
+
+@router.get("/dashboard/player", response_model=DashboardPlayerOut)
+def get_dashboard_player_http(user: SpotifyUserContext = Depends(get_spotify_user_context)) -> DashboardPlayerOut:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    return _spotify_player_state(access_token)
+
+
+@router.post("/dashboard/pause", response_model=DashboardPlaybackPauseOut)
+def post_dashboard_pause_http(user: SpotifyUserContext = Depends(get_spotify_user_context)) -> DashboardPlaybackPauseOut:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    resp = requests.put(
+        f"{API_BASE_URL}/me/player/pause",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code not in (200, 202, 204):
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify pause failed: {detail}")
+    write_dashboard_playback_paused(True)
+    return DashboardPlaybackPauseOut(paused=True)
+
+
+@router.post("/dashboard/resume", response_model=DashboardPlaybackPauseOut)
+def post_dashboard_resume_http(user: SpotifyUserContext = Depends(get_spotify_user_context)) -> DashboardPlaybackPauseOut:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    resp = requests.put(
+        f"{API_BASE_URL}/me/player/play",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code not in (200, 202, 204):
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify resume failed: {detail}")
+    write_dashboard_playback_paused(False)
+    return DashboardPlaybackPauseOut(paused=False)
 
 
 @router.get("/setup/status", response_model=SetupStatusOut)

@@ -80,6 +80,23 @@ class SpotifyNeuroPoolController:
         except ValueError:
             self._validate_batch = 50
         self._validate_batch = max(1, min(self._validate_batch, 200))
+        self._current_track_id: Optional[str] = None
+        self._last_end_trigger_at: float = 0.0
+        self._last_forced_switch_at: float = 0.0
+        self._last_seen_mood: Optional[str] = None
+        self._near_end_threshold: float = float(
+            os.environ.get("SPOTIFY_POOL_NEAR_END_THRESHOLD", "0.97") or "0.97"
+        )
+        self._near_end_threshold = max(0.8, min(self._near_end_threshold, 0.995))
+        self._end_debounce_s: float = float(
+            os.environ.get("SPOTIFY_POOL_END_DEBOUNCE_S", "3") or "3"
+        )
+        self._urgent_hold_s: float = float(
+            os.environ.get("SPOTIFY_POOL_URGENT_HOLD_S", "20") or "20"
+        )
+        self._urgent_switch_enabled: bool = os.environ.get(
+            "SPOTIFY_POOL_URGENT_SWITCH", "1"
+        ).strip().lower() in ("1", "true", "yes")
 
     def _validate_pool_slice(self, now: float) -> None:
         """Gradually validate pool track availability and blacklist dead URIs."""
@@ -111,6 +128,45 @@ class SpotifyNeuroPoolController:
                 len(self._invalid_uris),
             )
 
+    def _should_switch_on_track_end(self, now: float) -> bool:
+        if now - self._last_end_trigger_at < self._end_debounce_s:
+            return False
+        state = self._spotify.get_player_state()
+        if not state:
+            return False
+        item = state.get("item") if isinstance(state.get("item"), dict) else None
+        if not item:
+            return False
+        track_id = str(item.get("id") or "")
+        duration = int(item.get("duration_ms") or 0)
+        progress = int(state.get("progress_ms") or 0)
+        if track_id:
+            self._current_track_id = track_id
+        if duration <= 0:
+            return False
+        near_end = (progress / duration) >= self._near_end_threshold
+        if not near_end:
+            return False
+        self._last_end_trigger_at = now
+        return True
+
+    def _should_force_urgent_switch(self, now: float, stable_mood: Optional[str]) -> bool:
+        if not self._urgent_switch_enabled or stable_mood is None:
+            return False
+        if self._last_seen_mood is None:
+            self._last_seen_mood = stable_mood
+            return False
+        mood_changed = stable_mood != self._last_seen_mood
+        self._last_seen_mood = stable_mood
+        if not mood_changed:
+            return False
+        if now - self._last_play_at < self._urgent_hold_s:
+            return False
+        if now - self._last_forced_switch_at < self._urgent_hold_s:
+            return False
+        self._last_forced_switch_at = now
+        return True
+
     def update(
         self,
         features: NeuroFeatures,
@@ -123,16 +179,21 @@ class SpotifyNeuroPoolController:
 
         now = time.time()
         self._validate_pool_slice(now)
-        if now - self._last_play_at < self._min_interval_s:
-            return
+        end_trigger = self._should_switch_on_track_end(now)
+        urgent_trigger = self._should_force_urgent_switch(now, stable_mood)
 
-        if self._mood_gate:
-            mood = stable_mood
-            if mood is None:
+        if not end_trigger and not urgent_trigger:
+            # Safety fallback in case player-state polling is stale.
+            if now - self._last_play_at < max(30.0, self._min_interval_s):
                 return
-            if mood == self._last_mood:
-                return
-            self._last_mood = mood
+
+            if self._mood_gate:
+                mood = stable_mood
+                if mood is None:
+                    return
+                if mood == self._last_mood:
+                    return
+                self._last_mood = mood
 
         targets = neuro_features_to_pool_targets(features)
         for _ in range(3):
@@ -162,7 +223,16 @@ class SpotifyNeuroPoolController:
                     continue
 
             try:
-                self._spotify.play_track_uris([uri], device_id=device_id)
+                smooth = os.environ.get("SPOTIFY_SMOOTH_TRANSITIONS", "1").strip().lower() not in (
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                )
+                if smooth:
+                    self._spotify.play_track_uris_smooth([uri], device_id=device_id)
+                else:
+                    self._spotify.play_track_uris([uri], device_id=device_id)
             except Exception as exc:
                 # Playback failure for a single URI often means unavailable item.
                 self._invalid_uris.add(uri)
