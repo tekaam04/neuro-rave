@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 import src.constants as const
+from src.music_gen.spotify_refresh_token import (
+    load_spotify_refresh_token,
+    save_spotify_refresh_token_to_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,26 +24,6 @@ _context_track_list_blocked: set[str] = set()
 
 # Throttle "no Spotify devices" warnings (main loop calls playback often).
 _spotify_no_device_warn_at: float = 0.0
-_spotify_rec_hint_at: float = 0.0
-
-
-def _throttled_recommendations_hint(status: int, body: str, params: Dict[str, Any]) -> None:
-    """Explain common 404 causes for GET /recommendations (logged at most once per minute)."""
-    global _spotify_rec_hint_at
-    now = time.time()
-    if now - _spotify_rec_hint_at < 60.0:
-        return
-    _spotify_rec_hint_at = now
-    safe_params = {k: v for k, v in params.items()}
-    logger.warning(
-        "Spotify GET /recommendations failed (%s). Response: %s. Params were: %s. "
-        "Fixes: exact lowercase seeds from Spotify available-genre-seeds; "
-        "SPOTIFY_MARKET=US (or your region). Some developer apps return 404 here; "
-        "then use SPOTIFY_PLAYBACK_MODE=context.",
-        status,
-        (body or "").strip() or "(empty)",
-        safe_params,
-    )
 
 
 @dataclass
@@ -56,11 +40,10 @@ def clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
-def neuro_features_to_recommendation_targets(features: NeuroFeatures) -> Dict[str, float]:
-    """Map EEG-derived scalars to Spotify recommendation target_* parameters.
+def neuro_features_to_pool_targets(features: NeuroFeatures) -> Dict[str, float]:
+    """Map EEG-derived scalars to energy / valence / tempo targets for track-pool matching.
 
-    Spotify expects ``target_energy`` and ``target_valence`` in ``[0, 1]``;
-    ``target_tempo`` is a BPM float (not normalized).
+    Returns ``target_energy`` and ``target_valence`` in ``[0, 1]`` and ``target_tempo`` in BPM.
     """
     e = clamp(features.energy)
     fo = clamp(features.focus)
@@ -198,6 +181,16 @@ class SpotifyClient:
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0.0
 
+    def update_refresh_token(self, refresh_token: str) -> None:
+        """Hot-swap refresh token without recreating the client."""
+        rt = str(refresh_token).strip()
+        if not rt or rt == self._refresh_token:
+            return
+        self._refresh_token = rt
+        # Force a fresh access-token exchange on next request.
+        self._access_token = None
+        self._token_expires_at = 0.0
+
     def _ensure_access_token(self) -> None:
         if self._access_token and time.time() < self._token_expires_at - 30:
             return
@@ -206,17 +199,42 @@ class SpotifyClient:
             f"{self._client_id}:{self._client_secret}".encode("utf-8")
         ).decode("utf-8")
 
-        resp = requests.post(
-            self.TOKEN_URL,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-            },
-            headers={"Authorization": f"Basic {auth_header}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
+        # Keep long-running main loop in sync with token rotations saved by API routes.
+        latest = load_spotify_refresh_token()
+        if latest and latest != self._refresh_token:
+            self._refresh_token = latest
+            logger.info("Spotify client picked up refreshed token from local file.")
+
+        def _refresh_once() -> requests.Response:
+            return requests.post(
+                self.TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                },
+                headers={"Authorization": f"Basic {auth_header}"},
+                timeout=10,
+            )
+
+        resp = _refresh_once()
+        if resp.status_code != 200:
+            # One recovery attempt: re-read token file in case OAuth callback just rotated it.
+            retry = load_spotify_refresh_token()
+            if retry and retry != self._refresh_token:
+                self._refresh_token = retry
+                logger.info("Spotify token refresh failed; retrying with latest local token.")
+                resp = _refresh_once()
+        if resp.status_code != 200:
+            detail = (resp.text or "").strip()
+            raise RuntimeError(
+                f"Spotify token refresh failed: {resp.status_code} {detail or '(no body)'}"
+            )
         data = resp.json()
+        rotated = str(data.get("refresh_token") or "").strip()
+        if rotated and rotated != self._refresh_token:
+            self._refresh_token = rotated
+            save_spotify_refresh_token_to_file(rotated)
+            logger.info("Spotify refresh token rotated and saved locally.")
 
         self._access_token = data["access_token"]
         # "expires_in" is seconds from now.
@@ -460,70 +478,6 @@ class SpotifyClient:
         if use_shuffle:
             self.set_shuffle(True, device_id=shuffle_dev)
 
-    def get_recommendations(
-        self,
-        *,
-        seed_genres: List[str],
-        limit: int = 20,
-        market: Optional[str] = None,
-        target_energy: Optional[float] = None,
-        target_valence: Optional[float] = None,
-        target_tempo: Optional[float] = None,
-    ) -> List[str]:
-        """Return ``spotify:track:`` URIs from ``GET /recommendations``.
-
-        At most **five** seed genres are sent (Spotify limit across all seed types).
-        """
-        if not seed_genres:
-            return []
-        base: Dict[str, Any] = {
-            "seed_genres": ",".join(seed_genres[:5]),
-            "limit": min(max(limit, 1), 100),
-        }
-        mkt = (market or os.environ.get("SPOTIFY_MARKET", "") or "").strip()
-        if mkt:
-            base["market"] = mkt
-
-        full = dict(base)
-        if target_energy is not None:
-            full["target_energy"] = target_energy
-        if target_valence is not None:
-            full["target_valence"] = target_valence
-        if target_tempo is not None:
-            full["target_tempo"] = target_tempo
-
-        resp = requests.get(
-            f"{self.API_BASE_URL}/recommendations",
-            params=full,
-            headers=self._headers(),
-            timeout=15,
-        )
-        # Spotify sometimes returns 404 when targets + seeds have no catalog match; retry seeds only.
-        if resp.status_code != 200 and len(full) > len(base):
-            logger.info(
-                "Spotify recommendations status=%s; retrying without target_energy/valence/tempo.",
-                resp.status_code,
-            )
-            resp = requests.get(
-                f"{self.API_BASE_URL}/recommendations",
-                params=base,
-                headers=self._headers(),
-                timeout=15,
-            )
-
-        if resp.status_code != 200:
-            _throttled_recommendations_hint(resp.status_code, resp.text or "", full)
-            raise RuntimeError(
-                f"Spotify recommendations failed: {resp.status_code} {(resp.text or '').strip() or '(no body)'}"
-            )
-        tracks = resp.json().get("tracks") or []
-        out: List[str] = []
-        for t in tracks:
-            uri = (t or {}).get("uri")
-            if uri and isinstance(uri, str) and uri.startswith("spotify:track:"):
-                out.append(uri)
-        return out
-
     def play_track_uris(
         self,
         uris: List[str],
@@ -569,6 +523,66 @@ class SpotifyClient:
             raise RuntimeError(
                 f"Spotify playback request failed: {resp.status_code} {resp.text}"
             )
+
+    def get_playable_track_uris(self, uris: List[str]) -> set[str]:
+        """Return subset of ``uris`` that are currently playable in the configured market.
+
+        Uses ``GET /tracks?ids=...`` in chunks and filters out missing/unavailable tracks.
+        """
+        if not uris:
+            return set()
+
+        # Keep first occurrence order and only spotify:track URIs.
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for uri in uris:
+            u = str(uri or "").strip()
+            if not u.startswith("spotify:track:") or u in seen:
+                continue
+            seen.add(u)
+            ordered.append(u)
+        if not ordered:
+            return set()
+
+        market = (os.environ.get("SPOTIFY_MARKET", "") or "").strip()
+        playable: set[str] = set()
+        for i in range(0, len(ordered), 50):
+            batch = ordered[i : i + 50]
+            ids = [u.rsplit(":", 1)[-1] for u in batch]
+            params: Dict[str, Any] = {"ids": ",".join(ids)}
+            if market:
+                params["market"] = market
+            resp = requests.get(
+                f"{self.API_BASE_URL}/tracks",
+                params=params,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                # If metadata lookup fails, do not aggressively prune.
+                logger.warning(
+                    "Spotify /tracks validation failed (%s); keeping batch unchanged.",
+                    resp.status_code,
+                )
+                playable.update(batch)
+                continue
+
+            tracks = list((resp.json() or {}).get("tracks") or [])
+            for idx, t in enumerate(tracks):
+                if idx >= len(batch):
+                    break
+                if not isinstance(t, dict):
+                    continue
+                # ``None`` track means unavailable; ``is_local`` cannot be played by URI.
+                if t.get("is_local"):
+                    continue
+                if t.get("available_markets") == []:
+                    continue
+                # When ``market`` is passed Spotify may include ``is_playable``.
+                if t.get("is_playable") is False:
+                    continue
+                playable.add(batch[idx])
+        return playable
 
 
 class SpotifyNeuroController:
@@ -637,87 +651,6 @@ class SpotifyNeuroController:
             return
 
         self._spotify.start_playlist(context_uri, device_id=device_id)
-        self._current_mood = mood
-        self._last_switch_at = now
-
-
-class SpotifyNeuroRecommendationController:
-    """Drive playback with **one recommended track** per mood change.
-
-    Uses ``GET /v1/recommendations`` with ``target_energy``, ``target_valence``,
-    and ``target_tempo`` derived from :class:`NeuroFeatures`. Seed genres narrow
-    the catalog (Spotify requires at least one seed).
-    """
-
-    def __init__(
-        self,
-        spotify_client: SpotifyClient,
-        seed_genres: List[str],
-    ) -> None:
-        self._spotify = spotify_client
-        self._seed_genres = [g.strip().lower() for g in seed_genres if g.strip()][:5]
-        self._current_mood: Optional[str] = None
-        self._last_switch_at: float = 0.0
-        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "10") or "10")
-        try:
-            self._rec_limit = int(os.environ.get("SPOTIFY_RECOMMENDATIONS_LIMIT", "20") or "20")
-        except ValueError:
-            self._rec_limit = 20
-
-    def update(
-        self,
-        features: NeuroFeatures,
-        device_id: Optional[str] = None,
-        *,
-        stable_mood: Optional[str] = None,
-    ) -> None:
-        mood = stable_mood if stable_mood is not None else classify_mood(features)
-
-        if mood == self._current_mood:
-            return
-
-        now = time.time()
-        if self._last_switch_at and (now - self._last_switch_at) < self._min_switch_s:
-            return
-
-        if not self._seed_genres:
-            return
-
-        targets = neuro_features_to_recommendation_targets(features)
-        try:
-            uris = self._spotify.get_recommendations(
-                seed_genres=self._seed_genres,
-                limit=max(1, min(self._rec_limit, 100)),
-                target_energy=targets["target_energy"],
-                target_valence=targets["target_valence"],
-                target_tempo=targets["target_tempo"],
-            )
-        except Exception as exc:
-            # Details + throttled hints are logged from get_recommendations().
-            logger.debug("Spotify recommendations request failed: %s", exc)
-            return
-
-        if not uris:
-            logger.warning(
-                "Spotify recommendations returned no tracks (check SPOTIFY_SEED_GENRES)."
-            )
-            return
-
-        pick = random.choice(uris)
-        try:
-            self._spotify.play_track_uris([pick], device_id=device_id)
-        except Exception as exc:
-            logger.warning("Spotify track playback failed: %s", exc)
-            return
-
-        logger.info(
-            "Spotify recommendation track=%s targets energy=%.2f valence=%.2f tempo=%.0f mood=%s",
-            pick,
-            targets["target_energy"],
-            targets["target_valence"],
-            targets["target_tempo"],
-            mood,
-        )
         self._current_mood = mood
         self._last_switch_at = now
 

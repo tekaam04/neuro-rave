@@ -25,13 +25,12 @@ from src.music_gen.spotify_controller import (
     MoodStabilizer,
     NeuroFeatures as SpotifyNeuroFeatures,
     SpotifyClient,
-    SpotifyNeuroController,
-    SpotifyNeuroRecommendationController,
     propose_mood,
 )
-from src.music_gen.spotify_mapping_store import resolve_mood_playlists
-from src.music_gen.spotify_pool_controller import SpotifyNeuroPoolController
-from src.music_gen.track_pool import TrackPool
+from src.music_gen.dashboard_playback_mode import read_dashboard_playback_mode
+from src.music_gen.spotify_mapping_store import mood_mapping_path
+from src.music_gen.spotify_playback_factory import build_playback_controller
+from src.music_gen.spotify_refresh_token import load_spotify_refresh_token
 
 if TYPE_CHECKING:
     from src.streaming.lslbridge import LSLConsumer
@@ -201,11 +200,6 @@ if __name__ == "__main__":
         help="Spotify: mood → playlist/album (context). Overrides SPOTIFY_PLAYBACK_MODE.",
     )
     mx.add_argument(
-        "--spotify-recommendations",
-        action="store_true",
-        help="Spotify: EEG → recommendations API → single track. Requires SPOTIFY_SEED_GENRES.",
-    )
-    mx.add_argument(
         "--spotify-pool",
         action="store_true",
         help="Spotify: EEG → local CSV track pool (nearest energy/valence/tempo). See SPOTIFY_TRACK_POOL_CSV.",
@@ -213,8 +207,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
     if args.spotify_playlist:
         spotify_cli_mode = "context"
-    elif args.spotify_recommendations:
-        spotify_cli_mode = "recommendations"
     elif args.spotify_pool:
         spotify_cli_mode = "pool"
     else:
@@ -273,68 +265,87 @@ if __name__ == "__main__":
     # ── EEG processor ─────────────────────────────────────────────────────
     processor = EEGProcessor(window_seconds=1.0)
 
-    # ── Spotify controller (optional) ─────────────────────────────────────
-    spotify_controller: (
-        SpotifyNeuroController | SpotifyNeuroRecommendationController | SpotifyNeuroPoolController | None
-    ) = None
-    refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
+    # ── Spotify (rebuilt when dashboard mode or mapping / pool CSV changes) ─
+    refresh_token = load_spotify_refresh_token()
+    spotify_client: SpotifyClient | None = None
     if refresh_token:
-        if spotify_cli_mode is not None:
-            playback_mode = spotify_cli_mode
-        else:
-            em = os.environ.get("SPOTIFY_PLAYBACK_MODE", "context").strip().lower()
-            playback_mode = em if em in ("context", "recommendations", "pool") else "context"
-        spotify = SpotifyClient(
+        spotify_client = SpotifyClient(
             client_id=const.SPOTIFY_CLIENT_ID,
             client_secret=const.SPOTIFY_CLIENT_SECRET,
             refresh_token=refresh_token,
         )
-        if playback_mode == "recommendations":
-            raw = os.environ.get("SPOTIFY_SEED_GENRES", "").strip()
-            genres = [g.strip() for g in raw.split(",") if g.strip()][:5]
-            if not genres:
-                logger.warning(
-                    "Recommendations mode requires SPOTIFY_SEED_GENRES "
-                    "(comma-separated Spotify genre seeds, max 5) — Spotify disabled."
-                )
-            else:
-                spotify_controller = SpotifyNeuroRecommendationController(spotify, genres)
-                logger.info(
-                    "Spotify recommendation (single-track) mode enabled seeds=%s",
-                    genres,
-                )
-        elif playback_mode == "pool":
-            csv_path = (
+    else:
+        logger.info("No SPOTIFY_REFRESH_TOKEN — Spotify disabled.")
+
+    _spotify_rt: dict[str, object] = {
+        "client": spotify_client,
+        "controller": None,
+        "cache_key": None,
+        "last_token": refresh_token,
+    }
+
+    def _resolved_main_playback_mode() -> str:
+        if spotify_cli_mode is not None:
+            return spotify_cli_mode
+        return read_dashboard_playback_mode()
+
+    def _spotify_rebuild_cache_key() -> tuple:
+        mode = _resolved_main_playback_mode()
+        if mode == "context":
+            mp = mood_mapping_path()
+            mt = mp.stat().st_mtime if mp.is_file() else 0.0
+            return (mode, mt)
+        if mode == "pool":
+            csv_path = Path(
                 os.environ.get("SPOTIFY_TRACK_POOL_CSV", "").strip()
                 or str(_PROJECT_ROOT / "config" / "track_pool.csv")
             )
-            pool = TrackPool.from_csv(csv_path)
-            if pool.size == 0:
-                logger.warning(
-                    "Spotify pool mode: no tracks loaded from %s — copy e.g. TidyTuesday "
-                    "spotify_songs.csv to config/track_pool.csv or set SPOTIFY_TRACK_POOL_CSV.",
-                    csv_path,
-                )
+            mt = csv_path.stat().st_mtime if csv_path.is_file() else 0.0
+            return (mode, mt)
+        return (mode, 0.0)
+
+    def _rebuild_spotify_if_needed() -> None:
+        current_token = load_spotify_refresh_token()
+        prev_token = str(_spotify_rt.get("last_token") or "")
+        if current_token != prev_token:
+            _spotify_rt["last_token"] = current_token
+            existing = _spotify_rt.get("client")
+            if not current_token:
+                _spotify_rt["cache_key"] = None
+                _spotify_rt["controller"] = None
+                _spotify_rt["client"] = None
+                logger.info("Spotify token removed; disabling Spotify.")
+            elif isinstance(existing, SpotifyClient):
+                # Token rotated while running: update client in-place so controller
+                # state (e.g. min-switch timers/current mood) is preserved.
+                existing.update_refresh_token(current_token)
+                logger.info("Spotify token updated in running client.")
             else:
-                spotify_controller = SpotifyNeuroPoolController(spotify, pool)
-                logger.info(
-                    "Spotify track-pool mode enabled (%d tracks, CSV=%s). "
-                    "Interval=%.0fs (SPOTIFY_POOL_MIN_INTERVAL_S).",
-                    pool.size,
-                    csv_path,
-                    float(os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "10") or "10"),
+                _spotify_rt["cache_key"] = None
+                _spotify_rt["controller"] = None
+                _spotify_rt["client"] = SpotifyClient(
+                    client_id=const.SPOTIFY_CLIENT_ID,
+                    client_secret=const.SPOTIFY_CLIENT_SECRET,
+                    refresh_token=current_token,
                 )
-        else:
-            mood_playlists = resolve_mood_playlists()
-            if mood_playlists:
-                spotify_controller = SpotifyNeuroController(spotify, mood_playlists)
-                logger.info("Spotify playlist/context mode enabled.")
-            else:
-                logger.warning(
-                    "Spotify token set but no mood playlists configured — Spotify disabled."
-                )
-    else:
-        logger.info("No SPOTIFY_REFRESH_TOKEN — Spotify disabled.")
+                logger.info("Spotify token detected; enabling Spotify without restart.")
+
+        spotify = _spotify_rt.get("client")
+        if not isinstance(spotify, SpotifyClient):
+            _spotify_rt["controller"] = None
+            _spotify_rt["cache_key"] = None
+            return
+        key = _spotify_rebuild_cache_key()
+        prev_key = _spotify_rt["cache_key"]
+        prev_ctrl = _spotify_rt["controller"]
+        if key == prev_key and prev_ctrl is not None:
+            return
+        _spotify_rt["cache_key"] = key
+        mode = _resolved_main_playback_mode()
+        ctrl = build_playback_controller(mode, spotify=spotify, project_root=_PROJECT_ROOT)
+        _spotify_rt["controller"] = ctrl
+        if ctrl is not None:
+            logger.info("Spotify controller active mode=%s key=%s", mode, key)
 
     mood_stabilizer = MoodStabilizer()
     spotify_feature_pipeline = SpotifyFeaturePipeline()
@@ -378,8 +389,10 @@ if __name__ == "__main__":
             proposed,
         )
 
-        if spotify_controller is not None:
+        _rebuild_spotify_if_needed()
+        sp_ctrl = _spotify_rt["controller"]
+        if sp_ctrl is not None:
             try:
-                spotify_controller.update(spotify_features, stable_mood=mood)
+                sp_ctrl.update(spotify_features, stable_mood=mood)
             except Exception as exc:
                 logger.warning("Spotify update failed: %s", exc)

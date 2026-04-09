@@ -1,7 +1,7 @@
 CONDA_ENV  := neuro-rave
 CONDA_RUN  := conda run -n $(CONDA_ENV)
 
-.PHONY: setup setup-py setup-js build-c run run-sim dashboard clean-c clean all
+.PHONY: setup setup-py setup-js build-c run run-sim dashboard compose-up-open clean-c clean all
 
 # ── Python environment (conda) ────────────────────────────────────────────────
 # Creates the conda env once; re-installs packages only when requirements.txt changes.
@@ -50,6 +50,12 @@ run-sim: .conda-installed
 
 dashboard: setup-js
 	cd dashboard && npm run dev
+
+compose-up-open:
+	docker compose up -d
+	@echo "Opening dashboard at http://127.0.0.1:5173"
+	@open "http://127.0.0.1:5173"
+	docker compose logs -f
 
 # ── Composite / clean ─────────────────────────────────────────────────────────
 

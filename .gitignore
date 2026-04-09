@@ -1,6 +1,9 @@
 # Environment variables (contains sensitive tokens)
 .env
 
+# Spotify OAuth (written by Setup flow or get_spotify_refresh_token.py)
+config/.spotify_refresh_token
+
 # Python
 __pycache__/
 *.pyc

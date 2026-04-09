@@ -1,0 +1,18 @@
+{
+  "user_id": "default",
+  "calm_uri": "spotify:playlist:3NCraFbyGknolDJMxjf7bw",
+  "calm": [
+    "spotify:playlist:3NCraFbyGknolDJMxjf7bw",
+    "spotify:playlist:6OpvhaJmmbdhqjplBKUGeJ"
+  ],
+  "focus_uri": "spotify:album:526GOHUzH201xPsVWgBi1s",
+  "focus": [
+    "spotify:album:526GOHUzH201xPsVWgBi1s",
+    "spotify:playlist:37i9dQZF1DWZeKCadgRdKQ"
+  ],
+  "hype_uri": "spotify:playlist:37i9dQZF1DX76Wlfdnj7AP",
+  "hype": [
+    "spotify:playlist:37i9dQZF1DX76Wlfdnj7AP",
+    "spotify:playlist:7eEfJz9b3a1wS2jSyOvRvg"
+  ]
+}

@@ -1,4 +1,4 @@
-"""Labeled Spotify track pool for EEG Matched playback (no /recommendations API).
+"""Labeled Spotify track pool for EEG-matched playback from a local CSV.
 
 Loads a CSV with at least ``track_id``, ``energy``, ``valence``, ``tempo`` (as in
 TidyTuesday ``spotify_songs.csv``). Builds normalized feature vectors for fast

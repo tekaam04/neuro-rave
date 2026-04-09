@@ -1,8 +1,7 @@
 """Spotify playback from a local labeled track pool (CSV) + EEG targets.
 
-Does not call ``/v1/recommendations``. Picks tracks by feature-space distance to
-``target_energy`` / ``target_valence`` / ``target_tempo`` from
-:func:`neuro_features_to_recommendation_targets`.
+Picks tracks by feature-space distance to ``target_energy`` / ``target_valence`` /
+``target_tempo`` from :func:`neuro_features_to_pool_targets`.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import numpy as np
 from src.music_gen.spotify_controller import (
     NeuroFeatures,
     SpotifyClient,
-    neuro_features_to_recommendation_targets,
+    neuro_features_to_pool_targets,
 )
 from src.music_gen.track_pool import TrackPool
 
@@ -50,7 +49,8 @@ class SpotifyNeuroPoolController:
         self._min_interval_s: float = float(
             os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "10") or "10"
         )
-        self._min_interval_s = max(5.0, self._min_interval_s)
+        # Match playlist-mode guardrail: never switch faster than 10s.
+        self._min_interval_s = max(10.0, self._min_interval_s)
         try:
             self._top_k = int(os.environ.get("SPOTIFY_POOL_TOP_K", "8") or "8")
         except ValueError:
@@ -70,6 +70,46 @@ class SpotifyNeuroPoolController:
         )
         self._last_mood: Optional[str] = None
         self._rng = np.random.default_rng()
+        self._invalid_uris: Set[str] = set()
+        self._validated_uris: Set[str] = set()
+        self._next_validate_at: float = 0.0
+        try:
+            self._validate_batch = int(
+                os.environ.get("SPOTIFY_POOL_VALIDATE_BATCH", "50") or "50"
+            )
+        except ValueError:
+            self._validate_batch = 50
+        self._validate_batch = max(1, min(self._validate_batch, 200))
+
+    def _validate_pool_slice(self, now: float) -> None:
+        """Gradually validate pool track availability and blacklist dead URIs."""
+        if now < self._next_validate_at or self._pool.size == 0:
+            return
+        self._next_validate_at = now + 30.0
+        candidates: list[str] = []
+        for raw in self._pool.uris:
+            uri = str(raw)
+            if uri in self._validated_uris or uri in self._invalid_uris:
+                continue
+            candidates.append(uri)
+            if len(candidates) >= self._validate_batch:
+                break
+        if not candidates:
+            return
+        try:
+            playable = self._spotify.get_playable_track_uris(candidates)
+        except Exception as exc:
+            logger.debug("Pool validation skipped this cycle: %s", exc)
+            return
+        self._validated_uris.update(candidates)
+        bad = [u for u in candidates if u not in playable]
+        if bad:
+            self._invalid_uris.update(bad)
+            logger.info(
+                "Spotify pool pruned %d unavailable tracks (total invalid=%d).",
+                len(bad),
+                len(self._invalid_uris),
+            )
 
     def update(
         self,
@@ -82,6 +122,7 @@ class SpotifyNeuroPoolController:
             return
 
         now = time.time()
+        self._validate_pool_slice(now)
         if now - self._last_play_at < self._min_interval_s:
             return
 
@@ -93,33 +134,49 @@ class SpotifyNeuroPoolController:
                 return
             self._last_mood = mood
 
-        targets = neuro_features_to_recommendation_targets(features)
-        exclude: Set[str] = set(self._recent)
-        uri = self._pool.pick_nearest(
-            targets["target_energy"],
-            targets["target_valence"],
-            targets["target_tempo"],
-            rng=self._rng,
-            exclude=exclude,
-            top_k=self._top_k,
-            weights=_pool_weights(),
-        )
-        if not uri:
-            return
+        targets = neuro_features_to_pool_targets(features)
+        for _ in range(3):
+            exclude: Set[str] = set(self._recent) | self._invalid_uris
+            uri = self._pool.pick_nearest(
+                targets["target_energy"],
+                targets["target_valence"],
+                targets["target_tempo"],
+                rng=self._rng,
+                exclude=exclude,
+                top_k=self._top_k,
+                weights=_pool_weights(),
+            )
+            if not uri:
+                return
 
-        try:
-            self._spotify.play_track_uris([uri], device_id=device_id)
-        except Exception as exc:
-            logger.warning("Spotify pool playback failed: %s", exc)
-            return
+            # Validate selected URI right before playback to avoid silent dead tracks.
+            if uri not in self._validated_uris and uri not in self._invalid_uris:
+                try:
+                    playable = self._spotify.get_playable_track_uris([uri])
+                except Exception as exc:
+                    logger.debug("On-demand pool URI validation failed: %s", exc)
+                    playable = {uri}
+                self._validated_uris.add(uri)
+                if uri not in playable:
+                    self._invalid_uris.add(uri)
+                    continue
 
-        self._last_play_at = now
-        self._recent.append(uri)
-        logger.info(
-            "Spotify pool track=%s targets e=%.2f v=%.2f tempo=%.0f mood=%s",
-            uri,
-            targets["target_energy"],
-            targets["target_valence"],
-            targets["target_tempo"],
-            stable_mood or "-",
-        )
+            try:
+                self._spotify.play_track_uris([uri], device_id=device_id)
+            except Exception as exc:
+                # Playback failure for a single URI often means unavailable item.
+                self._invalid_uris.add(uri)
+                logger.warning("Spotify pool playback failed for %s: %s", uri, exc)
+                continue
+
+            self._last_play_at = now
+            self._recent.append(uri)
+            logger.info(
+                "Spotify pool track=%s targets e=%.2f v=%.2f tempo=%.0f mood=%s",
+                uri,
+                targets["target_energy"],
+                targets["target_valence"],
+                targets["target_tempo"],
+                stable_mood or "-",
+            )
+            return

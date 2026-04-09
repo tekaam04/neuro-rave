@@ -23,8 +23,9 @@ from typing import Optional
 import requests
 
 # Import constants from src
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-from constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+sys.path.insert(0, str(Path(__file__).parent))
+from src.music_gen.spotify_refresh_token import save_spotify_refresh_token_to_file
+from src.constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
 CLIENT_ID = SPOTIFY_CLIENT_ID
 CLIENT_SECRET = SPOTIFY_CLIENT_SECRET
@@ -113,7 +114,8 @@ def update_env_file(refresh_token: str) -> None:
         for key, value in existing_vars.items():
             f.write(f"{key}={value}\n")
 
-    print(f"\n✓ Wrote SPOTIFY_REFRESH_TOKEN to .env")
+    save_spotify_refresh_token_to_file(refresh_token)
+    print(f"\n✓ Wrote SPOTIFY_REFRESH_TOKEN to .env and config/.spotify_refresh_token")
 
 
 class CallbackHandler(BaseHTTPRequestHandler):

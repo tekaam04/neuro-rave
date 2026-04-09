@@ -17,14 +17,18 @@ services:
       - SPOTIFY_PLAYLIST_FOCUS=${SPOTIFY_PLAYLIST_FOCUS:-}
       - SPOTIFY_PLAYLIST_HYPE=${SPOTIFY_PLAYLIST_HYPE:-}
       - SPOTIFY_PLAYLIST_DEEP_FOCUS=${SPOTIFY_PLAYLIST_DEEP_FOCUS:-}
-      # Playback: context | recommendations | pool (CSV track pool, no /recommendations API).
+      # Playback: context (playlist) | pool (CSV track pool).
       - SPOTIFY_PLAYBACK_MODE=${SPOTIFY_PLAYBACK_MODE:-context}
       - SPOTIFY_TRACK_POOL_CSV=${SPOTIFY_TRACK_POOL_CSV:-}
       - SPOTIFY_MIN_SWITCH_S=${SPOTIFY_MIN_SWITCH_S:-}
       - SPOTIFY_POOL_MIN_INTERVAL_S=${SPOTIFY_POOL_MIN_INTERVAL_S:-}
-      - SPOTIFY_SEED_GENRES=${SPOTIFY_SEED_GENRES:-}
       - SPOTIFY_DEVICE_ID=${SPOTIFY_DEVICE_ID:-}
       - SPOTIFY_MARKET=${SPOTIFY_MARKET:-}
+      # OAuth callback for dashboard /setup (browser hits host:8733)
+      - SPOTIFY_OAUTH_REDIRECT_URI=${SPOTIFY_OAUTH_REDIRECT_URI:-}
+      # Spotify forbids ``localhost`` in redirect URIs; use loopback IP (see Spotify docs Apr 2025).
+      - SPOTIFY_OAUTH_PUBLIC_HOST=${SPOTIFY_OAUTH_PUBLIC_HOST:-127.0.0.1}
+      - SPOTIFY_OAUTH_SUCCESS_URL=${SPOTIFY_OAUTH_SUCCESS_URL:-http://localhost:5173/setup?spotify=connected}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -61,6 +65,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_WS_URL=ws://localhost:8733/ws
+      - VITE_API_BASE_URL=http://127.0.0.1:8733
     # Populate anonymous node_modules volume (Linux arm64/x64 optional deps); image build alone is not enough with ./dashboard:/app.
     command: sh -c "npm install && npm run dev"
     depends_on:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -22,6 +23,24 @@ def mood_mapping_path() -> Path:
 def _is_valid_spotify_context_uri(s: str) -> bool:
     t = s.strip()
     return t.startswith("spotify:playlist:") or t.startswith("spotify:album:")
+
+
+_SPOTIFY_OPEN_RE = re.compile(
+    r"^https?://open\.spotify\.com/(playlist|album)/([a-zA-Z0-9]+)(?:\?.*)?$",
+    re.IGNORECASE,
+)
+
+
+def parse_spotify_context_input(raw: str) -> str | None:
+    """Accept ``spotify:playlist:`` / ``spotify:album:`` URIs or open.spotify.com playlist/album URLs."""
+    s = raw.strip()
+    if _is_valid_spotify_context_uri(s):
+        return s.strip()
+    m = _SPOTIFY_OPEN_RE.match(s)
+    if m:
+        kind, pid = m.group(1).lower(), m.group(2)
+        return f"spotify:{kind}:{pid}"
+    return None
 
 
 def normalize_context_uris(raw: Any) -> list[str] | None:
@@ -92,6 +111,23 @@ def save_mood_playlists(
         lst = norm[mood]
         payload[f"{mood}_uri"] = lst[0]
         payload[mood] = lst if len(lst) > 1 else lst[0]
+
+    df_raw = mapping.get("deep_focus")
+    if df_raw is not None and df_raw != "":
+        if isinstance(df_raw, str):
+            dfl = normalize_context_uris(df_raw)
+            if not dfl and _is_valid_spotify_context_uri(df_raw):
+                dfl = [df_raw.strip()]
+        elif isinstance(df_raw, list):
+            dfl = [
+                u for u in df_raw
+                if isinstance(u, str) and _is_valid_spotify_context_uri(u)
+            ]
+        else:
+            dfl = []
+        if dfl:
+            payload["deep_focus"] = dfl[0] if len(dfl) == 1 else dfl
+
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
 
