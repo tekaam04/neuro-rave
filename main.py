@@ -1,21 +1,39 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+# Load before src.constants so SIMULATE / EEG_SIM (and Spotify vars) apply to local runs.
+load_dotenv(_PROJECT_ROOT / ".env")
+
+import argparse
+import logging
 import os
 import time
-import logging
-import threading
+from typing import TYPE_CHECKING
+
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 
-from src.streaming.lslbridge import TCPSource, BioSemi24BitDecoder, LSLPublisher, LSLConsumer, LSLBridge
-from src.streaming.ws_server import EEGWebSocketServer
-from src.processing.fifo import MirrorCircleBuffer
+from src.processing.fifo import MirrorCircleFIFO
 import src.constants as const
+from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 from src.music_gen.spotify_controller import (
+    MoodStabilizer,
     NeuroFeatures as SpotifyNeuroFeatures,
     SpotifyClient,
-    SpotifyNeuroController,
-    classify_mood,
+    propose_mood,
 )
-from src.music_gen.spotify_mapping_store import resolve_mood_playlists
+from src.music_gen.dashboard_playback_mode import read_dashboard_playback_mode
+from src.music_gen.spotify_mapping_store import mood_mapping_path
+from src.music_gen.spotify_playback_factory import build_playback_controller
+from src.music_gen.spotify_refresh_token import load_spotify_refresh_token
+
+if TYPE_CHECKING:
+    from src.streaming.lslbridge import LSLConsumer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -25,7 +43,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 
 THETA = (4, 8)
 ALPHA = (8, 13)
-BETA  = (13, 30)
+BETA = (13, 30)
 GAMMA = (30, 100)
 
 
@@ -49,7 +67,7 @@ def bandpower(data):
 
 class EEGProcessor:
     def __init__(self, window_seconds=1.0):
-        self.buffer = MirrorCircleBuffer.from_seconds(
+        self.buffer = MirrorCircleFIFO.from_seconds(
             seconds=window_seconds,
             sample_rate=const.SAMPLE_RATE,
             n_channels=const.N_CHANNELS,
@@ -64,14 +82,14 @@ class EEGProcessor:
 
         theta = bandpass(data, THETA[0], THETA[1], const.SAMPLE_RATE)
         alpha = bandpass(data, ALPHA[0], ALPHA[1], const.SAMPLE_RATE)
-        beta  = bandpass(data, BETA[0],  BETA[1],  const.SAMPLE_RATE)
+        beta = bandpass(data, BETA[0], BETA[1], const.SAMPLE_RATE)
         gamma = bandpass(data, GAMMA[0], GAMMA[1], const.SAMPLE_RATE)
 
         self.alpha_hist.append(alpha.copy())
 
         theta_power = bandpower(theta)
         alpha_power = bandpower(alpha)
-        beta_power  = bandpower(beta)
+        beta_power = bandpower(beta)
         gamma_power = bandpower(gamma)
 
         theta_beta = np.where(beta_power > 0, theta_power / beta_power, 0.0)
@@ -87,59 +105,123 @@ class EEGProcessor:
             )
 
         return {
-            "theta":             theta_power,
-            "alpha":             alpha_power,
-            "beta":              beta_power,
-            "gamma":             gamma_power,
-            "theta_beta_ratio":  theta_beta,
+            "theta": theta_power,
+            "alpha": alpha_power,
+            "beta": beta_power,
+            "gamma": gamma_power,
+            "theta_beta_ratio": theta_beta,
             "alpha_suppression": alpha_sup,
         }
 
 
-# ── Feature → Spotify mapping ─────────────────────────────────────────────────
+# ── Simulated EEG (raw only; DSP + feature maps match real pipeline) ─────────
 
-from collections import deque
-energy_history: deque[float] = deque(maxlen=50)
-
-
-def features_to_spotify(eeg_features: dict) -> SpotifyNeuroFeatures:
-    alpha_sup_mean = float(np.mean(eeg_features["alpha_suppression"]))
-    energy_raw = float(np.clip(alpha_sup_mean, -50.0, 100.0))
-    energy_history.append(energy_raw)
-    e_min = min(energy_history)
-    e_max = max(energy_history)
-    if (e_max - e_min) < 1e-9:
-        energy = 0.5
-    else:
-        energy = float(np.clip((energy_raw - e_min) / (e_max - e_min), 0.0, 1.0))
-
-    tb_mean = float(np.mean(eeg_features["theta_beta_ratio"]))
-    focus = float(np.clip((3.0 - tb_mean) / 2.5, 0.0, 1.0))
-
-    return SpotifyNeuroFeatures(energy=energy, focus=focus)
+_sim_clock_t0: float | None = None
+_sim_abs_time: float = 0.0
+_sim_last_phase: str | None = None
 
 
-# ── Simulated EEG signal (raw signal only, features are computed normally) ────
+def _sim_phase_name(elapsed: float) -> str:
+    plen = max(5.0, float(const.SIM_PHASE_SECONDS))
+    cyc = elapsed % (3.0 * plen)
+    if cyc < plen:
+        return "calm"
+    if cyc < 2.0 * plen:
+        return "focus"
+    return "hype"
+
 
 def generate_sim_chunk() -> np.ndarray:
-    """Generate one window of simulated raw EEG signal (no feature simulation)."""
-    t = np.arange(const.WINDOW_SIZE, dtype=np.float32) / float(const.SAMPLE_RATE)
-    # Mix of alpha (10Hz) and beta (20Hz) with noise
-    signal_1d = (
-        0.5 * np.sin(2 * np.pi * 10.0 * t) +
-        0.3 * np.sin(2 * np.pi * 20.0 * t) +
-        np.random.normal(scale=0.2, size=const.WINDOW_SIZE)
-    ).astype(np.float32)
-    return np.tile(signal_1d[:, None], (1, const.N_CHANNELS))
+    """Rotate calm → focus → hype every ``SIM_PHASE_SECONDS`` (wall clock).
+
+    Band content is engineered so bandpower / theta-beta land in ranges that
+    map to each mood after the real ``EEGProcessor`` pipeline.
+    """
+    global _sim_clock_t0, _sim_abs_time, _sim_last_phase
+
+    if _sim_clock_t0 is None:
+        _sim_clock_t0 = time.monotonic()
+
+    elapsed = time.monotonic() - _sim_clock_t0
+    phase = _sim_phase_name(elapsed)
+    if phase != _sim_last_phase:
+        logger.info(
+            "SIM phase -> %s (%.0f s per mood, then rotate)",
+            phase,
+            float(const.SIM_PHASE_SECONDS),
+        )
+        _sim_last_phase = phase
+
+    fs = float(const.SAMPLE_RATE)
+    n = int(const.WINDOW_SIZE)
+    rng = np.random.default_rng()
+
+    t0 = _sim_abs_time
+    t_vec = np.arange(n, dtype=np.float64) / fs + t0
+    _sim_abs_time += n / fs
+
+    out = np.zeros((n, const.N_CHANNELS), dtype=np.float32)
+    for c in range(const.N_CHANNELS):
+        t = t_vec * (1.0 + 0.015 * c)
+        if phase == "calm":
+            # Alpha/theta-heavy, low beta → higher theta/beta, lower “energy” after pipeline
+            sig = (
+                1.2 * np.sin(2 * np.pi * 10.0 * t)
+                + 0.42 * np.sin(2 * np.pi * 6.5 * t)
+                + 0.28 * np.sin(2 * np.pi * 4.0 * t)
+            )
+        elif phase == "focus":
+            # Beta-rich with moderate alpha → lower theta/beta, mid energy
+            sig = (
+                0.52 * np.sin(2 * np.pi * 18.5 * t)
+                + 0.48 * np.sin(2 * np.pi * 12.0 * t)
+                + 0.22 * np.sin(2 * np.pi * 10.0 * t)
+            )
+        else:
+            # Beta + high-frequency content → high beta/gamma, high energy
+            sig = (
+                0.48 * np.sin(2 * np.pi * 24.0 * t)
+                + 0.42 * np.sin(2 * np.pi * 32.0 * t)
+                + 0.38 * np.sin(2 * np.pi * 38.0 * t)
+            )
+        sig = sig + rng.standard_normal(n) * 0.11
+        out[:, c] = sig.astype(np.float32)
+    return out
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="NEURO-RAVE — EEG-driven Spotify")
+    mx = ap.add_mutually_exclusive_group()
+    mx.add_argument(
+        "--spotify-playlist",
+        action="store_true",
+        help="Spotify: mood → playlist/album (context). Overrides SPOTIFY_PLAYBACK_MODE.",
+    )
+    mx.add_argument(
+        "--spotify-pool",
+        action="store_true",
+        help="Spotify: EEG → local CSV track pool (nearest energy/valence/tempo). See SPOTIFY_TRACK_POOL_CSV.",
+    )
+    args = ap.parse_args()
+    if args.spotify_playlist:
+        spotify_cli_mode = "context"
+    elif args.spotify_pool:
+        spotify_cli_mode = "pool"
+    else:
+        spotify_cli_mode = None
 
-    # ── WebSocket server ──────────────────────────────────────────────────
+    # ── WebSocket server (optional: requires uvicorn, fastapi; pulls LSL for /ws broadcast) ──
     try:
+        from src.streaming.ws_server import EEGWebSocketServer
+
         EEGWebSocketServer().start()
+    except ImportError as exc:
+        logger.warning(
+            "EEG WebSocket server not started (install deps: pip install -r requirements.txt): %s",
+            exc,
+        )
     except Exception as exc:
         logger.warning("EEG WebSocket server not started: %s", exc)
 
@@ -147,11 +229,25 @@ if __name__ == "__main__":
     consumer: LSLConsumer | None = None
 
     if const.SIMULATE:
-        logger.info("SIMULATE=true — using generated EEG signal (features computed from real DSP pipeline)")
+        logger.info(
+            "SIMULATE=true — using generated EEG signal (features computed from real DSP pipeline)"
+        )
     else:
-        logger.info("SIMULATE=false — connecting to BioSemi at %s:%d", const.BIOSEMI_HOST, const.BIOSEMI_PORT)
-        tcp       = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
-        decoder   = BioSemi24BitDecoder(const.N_CHANNELS)
+        from src.streaming.lslbridge import (
+            BioSemi24BitDecoder,
+            LSLBridge,
+            LSLConsumer,
+            LSLPublisher,
+            TCPSource,
+        )
+
+        logger.info(
+            "SIMULATE=false — connecting to BioSemi at %s:%d",
+            const.BIOSEMI_HOST,
+            const.BIOSEMI_PORT,
+        )
+        tcp = TCPSource(const.BIOSEMI_HOST, const.BIOSEMI_PORT)
+        decoder = BioSemi24BitDecoder(const.N_CHANNELS)
         publisher = LSLPublisher(
             "BioSemiEEG", "EEG", const.N_CHANNELS, const.SAMPLE_RATE, "biosemi_tcp_bridge"
         )
@@ -169,33 +265,97 @@ if __name__ == "__main__":
     # ── EEG processor ─────────────────────────────────────────────────────
     processor = EEGProcessor(window_seconds=1.0)
 
-    # ── Spotify controller (optional) ─────────────────────────────────────
-    spotify_controller: SpotifyNeuroController | None = None
-    refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
+    # ── Spotify (rebuilt when dashboard mode or mapping / pool CSV changes) ─
+    refresh_token = load_spotify_refresh_token()
+    spotify_client: SpotifyClient | None = None
     if refresh_token:
-        mood_playlists = resolve_mood_playlists()
-        if mood_playlists:
-            spotify_controller = SpotifyNeuroController(
-                SpotifyClient(
-                    client_id=const.SPOTIFY_CLIENT_ID,
-                    client_secret=const.SPOTIFY_CLIENT_SECRET,
-                    refresh_token=refresh_token,
-                ),
-                mood_playlists,
-            )
-            logger.info("Spotify neuro controller enabled.")
-        else:
-            logger.warning("Spotify token set but no mood playlists configured — Spotify disabled.")
+        spotify_client = SpotifyClient(
+            client_id=const.SPOTIFY_CLIENT_ID,
+            client_secret=const.SPOTIFY_CLIENT_SECRET,
+            refresh_token=refresh_token,
+        )
     else:
         logger.info("No SPOTIFY_REFRESH_TOKEN — Spotify disabled.")
+
+    _spotify_rt: dict[str, object] = {
+        "client": spotify_client,
+        "controller": None,
+        "cache_key": None,
+        "last_token": refresh_token,
+    }
+
+    def _resolved_main_playback_mode() -> str:
+        if spotify_cli_mode is not None:
+            return spotify_cli_mode
+        return read_dashboard_playback_mode()
+
+    def _spotify_rebuild_cache_key() -> tuple:
+        mode = _resolved_main_playback_mode()
+        if mode == "context":
+            mp = mood_mapping_path()
+            mt = mp.stat().st_mtime if mp.is_file() else 0.0
+            return (mode, mt)
+        if mode == "pool":
+            csv_path = Path(
+                os.environ.get("SPOTIFY_TRACK_POOL_CSV", "").strip()
+                or str(_PROJECT_ROOT / "config" / "track_pool.csv")
+            )
+            mt = csv_path.stat().st_mtime if csv_path.is_file() else 0.0
+            return (mode, mt)
+        return (mode, 0.0)
+
+    def _rebuild_spotify_if_needed() -> None:
+        current_token = load_spotify_refresh_token()
+        prev_token = str(_spotify_rt.get("last_token") or "")
+        if current_token != prev_token:
+            _spotify_rt["last_token"] = current_token
+            existing = _spotify_rt.get("client")
+            if not current_token:
+                _spotify_rt["cache_key"] = None
+                _spotify_rt["controller"] = None
+                _spotify_rt["client"] = None
+                logger.info("Spotify token removed; disabling Spotify.")
+            elif isinstance(existing, SpotifyClient):
+                # Token rotated while running: update client in-place so controller
+                # state (e.g. min-switch timers/current mood) is preserved.
+                existing.update_refresh_token(current_token)
+                logger.info("Spotify token updated in running client.")
+            else:
+                _spotify_rt["cache_key"] = None
+                _spotify_rt["controller"] = None
+                _spotify_rt["client"] = SpotifyClient(
+                    client_id=const.SPOTIFY_CLIENT_ID,
+                    client_secret=const.SPOTIFY_CLIENT_SECRET,
+                    refresh_token=current_token,
+                )
+                logger.info("Spotify token detected; enabling Spotify without restart.")
+
+        spotify = _spotify_rt.get("client")
+        if not isinstance(spotify, SpotifyClient):
+            _spotify_rt["controller"] = None
+            _spotify_rt["cache_key"] = None
+            return
+        key = _spotify_rebuild_cache_key()
+        prev_key = _spotify_rt["cache_key"]
+        prev_ctrl = _spotify_rt["controller"]
+        if key == prev_key and prev_ctrl is not None:
+            return
+        _spotify_rt["cache_key"] = key
+        mode = _resolved_main_playback_mode()
+        ctrl = build_playback_controller(mode, spotify=spotify, project_root=_PROJECT_ROOT)
+        _spotify_rt["controller"] = ctrl
+        if ctrl is not None:
+            logger.info("Spotify controller active mode=%s key=%s", mode, key)
+
+    mood_stabilizer = MoodStabilizer()
+    spotify_feature_pipeline = SpotifyFeaturePipeline()
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
     while True:
-        # Get samples — either simulated or from LSL
         if const.SIMULATE:
             samples = generate_sim_chunk()
-            time.sleep(const.WINDOW_SIZE / const.SAMPLE_RATE)  # pace to real-time
+            time.sleep(const.WINDOW_SIZE / const.SAMPLE_RATE)
         else:
             assert consumer is not None
             samples, ts = consumer.get_chunk()
@@ -203,27 +363,36 @@ if __name__ == "__main__":
                 time.sleep(0.01)
                 continue
 
-        # Feed into processor (same pipeline regardless of source)
         processor.buffer.add_chunk(np.asarray(samples, dtype=np.float32))
 
         if not processor.buffer.full:
             continue
 
         eeg_features = processor.process_window()
-        spotify_features = features_to_spotify(eeg_features)
-        mood = classify_mood(spotify_features)
+        raw_feat = spotify_feature_pipeline.process(eeg_features)
+        se, sf, d_e = mood_stabilizer.smooth(raw_feat.energy, raw_feat.focus)
+        spotify_features = SpotifyNeuroFeatures(energy=se, focus=sf, d_energy=d_e)
+        proposed = propose_mood(spotify_features)
+        mood = mood_stabilizer.majority_mood(proposed)
 
         logger.info(
-            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | energy=%.2f focus=%.2f | mood=%s",
+            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | e_in=%.2f f_in=%.2f | "
+            "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
             float(np.mean(eeg_features["theta_beta_ratio"])),
             float(np.mean(eeg_features["alpha_suppression"])),
+            raw_feat.energy,
+            raw_feat.focus,
             spotify_features.energy,
             spotify_features.focus,
+            d_e,
             mood,
+            proposed,
         )
 
-        if spotify_controller is not None:
+        _rebuild_spotify_if_needed()
+        sp_ctrl = _spotify_rt["controller"]
+        if sp_ctrl is not None:
             try:
-                spotify_controller.update(spotify_features)
+                sp_ctrl.update(spotify_features, stable_mood=mood)
             except Exception as exc:
                 logger.warning("Spotify update failed: %s", exc)

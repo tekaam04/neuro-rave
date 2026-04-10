@@ -2,7 +2,30 @@
   "N_CHANNELS":       8,
   "SAMPLE_RATE":      512,
   "WINDOW_SIZE":      512,
-  "SIMULATE":         false,
+  "SIMULATE":         true,
+
+  "FOCUS_THETA_BETA_LOW":  0.10,
+  "FOCUS_THETA_BETA_HIGH": 0.42,
+  "SIM_PHASE_SECONDS":     30,
+
+  "ENERGY_ALPHA_SUP_PERCENT_LOW":   -10,
+  "ENERGY_ALPHA_SUP_PERCENT_HIGH":  45,
+  "ENERGY_RAW_CLIP_LOW":            -50,
+  "ENERGY_RAW_CLIP_HIGH":           100,
+  "ENERGY_BLEND_ABSOLUTE_WEIGHT":   0.55,
+  "ENERGY_HISTORY_MAX":             96,
+  "GAMMA_AROUSAL_WEIGHT":           0.14,
+  "ENERGY_SLOW_ALPHA":              0.045,
+  "ENERGY_FAST_WEIGHT":             0.62,
+
+  "MOOD_HYPE_E_EFF_MIN":        0.68,
+  "MOOD_CALM_E_MAX":            0.33,
+  "MOOD_CALM_F_MAX":            0.42,
+  "MOOD_DEEP_FOCUS_E_MAX":      0.43,
+  "MOOD_DEEP_FOCUS_F_MIN":      0.52,
+  "MOOD_DISTRACT_HYPE_E_MIN":   0.52,
+  "MOOD_DISTRACT_HYPE_F_MAX":   0.38,
+  "MOOD_D_ENERGY_SCALE":        0.85,
 
   "BIOSEMI_HOST":     "127.0.0.1",
   "BIOSEMI_PORT":     8888,
@@ -14,7 +37,8 @@
 
   "SPOTIFY_CLIENT_ID":      "f9fbc81f34174b569dddeb0746f6cbfd",
   "SPOTIFY_CLIENT_SECRET":  "1cc88b5ce4464cf4912f7c0e8d4e3847",
-  "SPOTIFY_PLAYLIST_CALM":  "spotify:playlist:63K1r9eNMihJJGQ9RE0RMo",
-  "SPOTIFY_PLAYLIST_FOCUS": "spotify:album:526GOHUzH201xPsVWgBi1s",
-  "SPOTIFY_PLAYLIST_HYPE":  "spotify:playlist:7eEfJz9b3a1wS2jSyOvRvg"
+  "SPOTIFY_PLAYLIST_CALM":  "spotify:playlist:63K1r9eNMihJJGQ9RE0RMo,spotify:playlist:37i9dQZF1DX4sWSpwq3LiO",
+  "SPOTIFY_PLAYLIST_FOCUS": "spotify:album:526GOHUzH201xPsVWgBi1s,spotify:playlist:37i9dQZF1DWZZbwlv3Vmtr,spotify:playlist:37i9dQZF1DWXLeA8Omikj7",
+  "SPOTIFY_PLAYLIST_HYPE":  "spotify:playlist:7eEfJz9b3a1wS2jSyOvRvg,spotify:playlist:37i9dQZF1DX76Wlfdnj7AP",
+  "SPOTIFY_PLAYLIST_DEEP_FOCUS": "spotify:playlist:37i9dQZF1DWZeKCadgRdKQ,spotify:album:526GOHUzH201xPsVWgBi1s,spotify:playlist:37i9dQZF1DWZZbwlv3Vmtr"
 }

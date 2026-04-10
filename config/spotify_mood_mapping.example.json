@@ -1,9 +1,0 @@
-{
-  "user_id": "default",
-  "calm": "spotify:playlist:REPLACE_WITH_CALM_PLAYLIST_ID",
-  "focus": "spotify:playlist:REPLACE_WITH_FOCUS_PLAYLIST_ID",
-  "hype": "spotify:playlist:REPLACE_WITH_HYPE_PLAYLIST_ID",
-  "calm_uri": "spotify:playlist:REPLACE_WITH_CALM_PLAYLIST_ID",
-  "focus_uri": "spotify:playlist:REPLACE_WITH_FOCUS_PLAYLIST_ID",
-  "hype_uri": "spotify:playlist:REPLACE_WITH_HYPE_PLAYLIST_ID"
-}

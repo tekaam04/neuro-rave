@@ -1,6 +1,32 @@
+import os
 import socket
 import threading
+from pathlib import Path
+
 import numpy as np
+
+
+def _ensure_pylsl_lib_path() -> None:
+    """Set PYLSL_LIB before importing pylsl.
+
+    On macOS, ``DYLD_LIBRARY_PATH`` is often ignored (SIP); pylsl loads via
+    ``PYLSL_LIB`` or its bundled search path. Homebrew installs
+    ``liblsl*.dylib`` under ``/opt/homebrew/lib`` or ``/usr/local/lib``.
+    """
+    if os.environ.get("PYLSL_LIB"):
+        return
+    for libdir in (Path("/opt/homebrew/lib"), Path("/usr/local/lib")):
+        if not libdir.is_dir():
+            continue
+        for pattern in ("liblsl*.dylib", "liblsl.so*"):
+            matches = sorted(libdir.glob(pattern))
+            for cand in matches:
+                if cand.is_file():
+                    os.environ["PYLSL_LIB"] = str(cand.resolve())
+                    return
+
+
+_ensure_pylsl_lib_path()
 from pylsl import StreamInfo, StreamOutlet, StreamInlet, resolve_stream
 
 class TCPSource:

@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 from src.streaming.lslbridge import LSLConsumer
-from src.processing.fifo import MirrorCircleBuffer
+from src.processing.fifo import MirrorCircleFIFO
 import src.constants as const
 
 logger = logging.getLogger(__name__)
@@ -33,14 +33,14 @@ def bandpower(data):
 
 class EEGProcessor:
     """
-    Real-time EEG feature extractor backed by a MirrorCircleBuffer.
+    Real-time EEG feature extractor backed by a MirrorCircleFIFO.
 
     Reads chunks from an LSLConsumer, fills the buffer, and on each full
     window computes band powers and derived features.
     """
 
     def __init__(self, window_seconds=1.0):
-        self.buffer = MirrorCircleBuffer.from_seconds(
+        self.buffer = MirrorCircleFIFO.from_seconds(
             seconds=window_seconds,
             sample_rate=const.SAMPLE_RATE,
             n_channels=const.N_CHANNELS,

@@ -23,8 +23,9 @@ from typing import Optional
 import requests
 
 # Import constants from src
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-from constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+sys.path.insert(0, str(Path(__file__).parent))
+from src.music_gen.spotify_refresh_token import save_spotify_refresh_token_to_file
+from src.constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
 CLIENT_ID = SPOTIFY_CLIENT_ID
 CLIENT_SECRET = SPOTIFY_CLIENT_SECRET
@@ -72,30 +73,49 @@ def exchange_code_for_tokens(code):
     return resp.json()
 
 
-def update_env_file(refresh_token) -> None:
-    """Update or create .env file with refresh token."""
-    env_path = Path(".env")
-    
-    # Read existing .env if it exists
-    existing_vars = {}
-    if env_path.exists():
-        with open(env_path, "r") as f:
+def _prepare_dotenv_path(env_path: Path) -> None:
+    """Ensure env_path can be opened as a file.
+
+    Docker bind-mount ``./.env:/app/.env`` creates an empty *directory* on the host
+    when `.env` is missing; remove that so we can write a real file.
+    """
+    if not env_path.exists():
+        return
+    if env_path.is_file():
+        return
+    if env_path.is_dir():
+        contents = list(env_path.iterdir())
+        if contents:
+            raise RuntimeError(
+                f"{env_path} is a non-empty directory; move or delete its contents, then:\n"
+                f"  rm -rf {env_path}"
+            )
+        env_path.rmdir()
+
+
+def update_env_file(refresh_token: str) -> None:
+    """Update or create .env file with refresh token (repo root, next to this script)."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    _prepare_dotenv_path(env_path)
+
+    existing_vars: dict[str, str] = {}
+    if env_path.is_file():
+        with open(env_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     if "=" in line:
                         key, value = line.split("=", 1)
                         existing_vars[key.strip()] = value.strip()
-    
-    # Update with refresh token
+
     existing_vars["SPOTIFY_REFRESH_TOKEN"] = refresh_token
-    
-    # Write back to .env
-    with open(env_path, "w") as f:
+
+    with open(env_path, "w", encoding="utf-8") as f:
         for key, value in existing_vars.items():
             f.write(f"{key}={value}\n")
-    
-    print(f"\n✓ Added SPOTIFY_REFRESH_TOKEN to .env")
+
+    save_spotify_refresh_token_to_file(refresh_token)
+    print(f"\n✓ Wrote SPOTIFY_REFRESH_TOKEN to .env and config/.spotify_refresh_token")
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
