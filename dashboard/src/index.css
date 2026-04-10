@@ -266,6 +266,37 @@ button {
   animation: pulse 1.5s infinite;
 }
 
+.empty-chart-placeholder {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 42px;
+  margin: 10px 0 8px 0;
+}
+
+.empty-chart-bar {
+  width: 14px;
+  border-radius: 8px 8px 0 0;
+  background: rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.empty-chart-bar:nth-child(1) {
+  height: 18px;
+}
+
+.empty-chart-bar:nth-child(2) {
+  height: 28px;
+}
+
+.empty-chart-bar:nth-child(3) {
+  height: 22px;
+}
+
+.empty-chart-bar:nth-child(4) {
+  height: 34px;
+}
+
 @keyframes pulse {
   0% {
     opacity: 0.3;

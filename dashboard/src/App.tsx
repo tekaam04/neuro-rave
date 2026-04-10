@@ -149,6 +149,12 @@ function EmptyChartCard({ title }: { title: string }) {
       }}
     >
       <div className="chart-title">{title}</div>
+      <div className="empty-chart-placeholder">
+        <div className="empty-chart-bar" />
+        <div className="empty-chart-bar" />
+        <div className="empty-chart-bar" />
+        <div className="empty-chart-bar" />
+      </div>
       <div className="small-text">Waiting for live feature updates...</div>
     </div>
   );
