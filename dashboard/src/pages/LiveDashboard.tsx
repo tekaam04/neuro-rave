@@ -4,6 +4,15 @@ import { getApiBase } from "../apiBase";
 import { useEEGStream } from "../hooks/useEEGStream";
 import { EEGChart } from "../components/EEGChart";
 import { SAMPLE_RATE, WS_PORT } from "../constants";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from "recharts";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? `ws://localhost:${WS_PORT}/ws`;
 
@@ -21,10 +30,7 @@ const defaultPlaylistLabels: Record<string, string> = {
   deep_focus: "Deep Focus Flow",
 };
 
-function playlistLabel(
-  mood: string,
-  labels: Record<string, string>,
-): string {
+function playlistLabel(mood: string, labels: Record<string, string>): string {
   if (labels[mood]) return labels[mood];
   if (mood === "deep_focus" && labels.focus) return labels.focus;
   return defaultPlaylistLabels[mood] ?? mood.replace(/_/g, " ");
@@ -101,8 +107,7 @@ interface HistoryPoint {
   energy: number;
   focus: number;
 }
-
-function TinyBarChart({
+function HistoryLineChart({
   history,
   metricKey,
   color,
@@ -113,25 +118,61 @@ function TinyBarChart({
   color: string;
   title: string;
 }) {
-  const maxHeight = 120;
+  const chartData = history.map((point) => ({
+    time: point.time,
+    shortTime: point.time.slice(-8),
+    value: Math.round(point[metricKey] * 100),
+  }));
 
   return (
-    <div className="chart-card">
+    <div className="chart-card real-chart-card">
       <div className="chart-title">{title}</div>
-      <div className="chart-bars">
-        {history.map((point, index) => (
-          <div key={`${metricKey}-${index}`} className="chart-bar-group">
-            <div
-              className="chart-bar"
-              style={{
-                height: `${point[metricKey] * maxHeight}px`,
-                backgroundColor: color,
-              }}
-              title={`${point.time} - ${metricKey}: ${formatPercent(point[metricKey])}`}
+
+      <div className="real-chart-wrap">
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart
+            data={chartData}
+            margin={{ top: 10, right: 12, left: -18, bottom: 0 }}
+          >
+            <CartesianGrid
+              stroke="rgba(148, 163, 184, 0.12)"
+              vertical={false}
             />
-            <div className="chart-time">{point.time.slice(-2)}</div>
-          </div>
-        ))}
+            <XAxis
+              dataKey="shortTime"
+              tick={{ fill: "#94a3b8", fontSize: 12 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              domain={[0, 100]}
+              tick={{ fill: "#94a3b8", fontSize: 12 }}
+              axisLine={false}
+              tickLine={false}
+              width={34}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "rgba(15, 23, 42, 0.96)",
+                border: "1px solid rgba(120, 160, 255, 0.18)",
+                borderRadius: "12px",
+                color: "#e2e8f0",
+              }}
+              labelStyle={{ color: "#cbd5e1" }}
+              formatter={(value: number) => [`${value}%`, title]}
+            />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={color}
+              strokeWidth={3}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+              isAnimationActive={true}
+              animationDuration={500}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -139,16 +180,17 @@ function TinyBarChart({
 
 function EmptyChartCard({ title }: { title: string }) {
   return (
-    <div
-      className="chart-card"
-      style={{
-        minHeight: "110px",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-      }}
-    >
+    <div className="chart-card empty-chart-card">
       <div className="chart-title">{title}</div>
+
+      <div className="empty-chart-placeholder">
+        <div className="empty-chart-line short" />
+        <div className="empty-chart-line medium" />
+        <div className="empty-chart-line tall" />
+        <div className="empty-chart-line medium" />
+        <div className="empty-chart-line short" />
+      </div>
+
       <div className="small-text">Waiting for live feature updates...</div>
     </div>
   );
@@ -246,7 +288,7 @@ export default function LiveDashboard() {
         ...prev,
         { time: now, energy: features.energy, focus: features.focus },
       ];
-      return updated.slice(-8);
+      return updated.slice(-20);
     });
 
     const prevMood = prevMoodRef.current;
@@ -311,8 +353,8 @@ export default function LiveDashboard() {
 
   return (
     <div className="app-shell">
-      <header className="hero">
-        <div>
+      <header className="topbar">
+        <div className="topbar-text">
           <h1>EEG-Powered Music Dashboard</h1>
           <p className="subtitle">
             Frontend dashboard for live brain metrics, mood detection, and music
@@ -320,7 +362,7 @@ export default function LiveDashboard() {
           </p>
         </div>
 
-        <div className="header-statuses">
+        <div className="topbar-status">
           <StatusBadge
             text={connected ? "Connected" : "Connecting"}
             color={connected ? "#16a34a" : "#dc2626"}
@@ -332,168 +374,185 @@ export default function LiveDashboard() {
         </div>
       </header>
 
-      <section className="panel" style={{ marginBottom: 18 }}>
-        <h2>Live EEG Stream</h2>
-        {channels.length > 0 ? (
-          <EEGChart channels={channels} sampleRate={SAMPLE_RATE} />
-        ) : (
-          <div
-            className="small-text"
-            style={{ display: "flex", alignItems: "center", gap: "8px" }}
-          >
-            <span className="pulse-dot" />
-            {connectionStatusText}
-          </div>
-        )}
-      </section>
+      <section className="hero-grid">
+        <div className="card mood-hero">
+          <div className="section-label">Current Mood</div>
+          <div className="mood-hero-content">
+            <div className="mood-hero-text">
+              <h2>{mood.replace(/_/g, " ").toUpperCase()}</h2>
+              <p>Mood is classified from EEG-derived energy values.</p>
+              <span className="mood-meta">
+                {connected ? "Live signal active" : "Waiting for signal"}
+              </span>
+            </div>
 
-      <section className="top-grid">
-        <div className="panel">
-          <h2>Live Brain Metrics</h2>
-          <div className="metrics-grid">
-            <MetricCard label="Energy" value={energy} accent="#f97316" />
-            <MetricCard label="Focus" value={focus} accent="#34d399" />
-          </div>
-        </div>
-
-        <div className="panel">
-          <h2>Current Mood</h2>
-          <div className="mood-panel">
-            <div
-              className="mood-circle"
-              style={{ backgroundColor: moodColor }}
-            >
+            <div className="mood-orb" style={{ backgroundColor: moodColor }}>
               {mood.replace(/_/g, " ").toUpperCase()}
             </div>
-            <p className="mood-description">
-              Mood is classified from EEG-derived energy values.
-            </p>
-            <div className="legend-row">
-              <span
-                className={`legend-pill ${mood === "calm" ? "active" : ""}`}
-              >
-                Calm
-              </span>
-              <span
-                className={`legend-pill ${mood === "deep_focus" ? "active" : ""}`}
-              >
-                Deep focus
-              </span>
-              <span
-                className={`legend-pill ${mood === "focus" ? "active" : ""}`}
-              >
-                Focus
-              </span>
-              <span
-                className={`legend-pill ${mood === "hype" ? "active" : ""}`}
-              >
-                Hype
-              </span>
+          </div>
+
+          <div className="legend-row">
+            <span className={`legend-pill ${mood === "calm" ? "active" : ""}`}>
+              Calm
+            </span>
+            <span
+              className={`legend-pill ${mood === "deep_focus" ? "active" : ""}`}
+            >
+              Deep focus
+            </span>
+            <span className={`legend-pill ${mood === "focus" ? "active" : ""}`}>
+              Focus
+            </span>
+            <span className={`legend-pill ${mood === "hype" ? "active" : ""}`}>
+              Hype
+            </span>
+          </div>
+        </div>
+
+        <div className="card eeg-status-card">
+          <div className="section-label">Live EEG Status</div>
+
+          <div className="status-list">
+            <div className="status-row">
+              <span className="status-dot live" />
+              <span>Connected to EEG stream</span>
+            </div>
+
+            <div className="status-row">
+              <span className="status-dot live" />
+              <span>Receiving EEG updates</span>
+            </div>
+
+            <div className="status-row muted">
+              <span>Last update: just now</span>
+            </div>
+          </div>
+
+          <div className="mini-metrics">
+            <div>
+              <div className="mini-label">Energy</div>
+              <div className="mini-value">{formatPercent(energy)}</div>
+            </div>
+            <div>
+              <div className="mini-label">Focus</div>
+              <div className="mini-value">{formatPercent(focus)}</div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="panel">
-        <div className="music-header">
-          <h2>Music Control Panel</h2>
-          <p className="small-text" style={{ margin: "0 0 6px 0" }}>
-            {spotifyTokenConnected
-              ? "Spotify token connected. You can control playback."
-              : "Connect Spotify first to save a local refresh token and enable playback control."}
-          </p>
-          <div className="button-row">
-            <a className="toggle-btn" href={connectSpotifyHref}>
+      <section className="metrics-grid metrics-grid-four">
+        <MetricCard label="Energy" value={energy} accent="#f97316" />
+        <MetricCard label="Focus" value={focus} accent="#34d399" />
+
+        {neuroFeatureCards.map((feature) => (
+          <FeatureStatCard
+            key={feature.label}
+            label={feature.label}
+            value={feature.value}
+            subtitle={feature.subtitle}
+          />
+        ))}
+      </section>
+
+      <section className="music-section">
+        <div className="music-section-header">
+          <div>
+            <h2>Music Control</h2>
+            <p className="small-text music-helper">
               {spotifyTokenConnected
-                ? "Reconnect Spotify"
-                : "Connect Spotify (get token)"}
-            </a>
-            <button
-              className={
-                playbackKind === "playlist"
-                  ? "toggle-btn active-btn"
-                  : "toggle-btn"
-              }
-              type="button"
-              onClick={() => void onPlaylistMode()}
-            >
-              Playlist mode
-            </button>
-            <button
-              className={
-                playbackKind === "pool" ? "toggle-btn active-btn" : "toggle-btn"
-              }
-              type="button"
-              onClick={() => void onPoolMode()}
-            >
-              Pool mode
-            </button>
+                ? "Spotify token connected. You can control playback."
+                : "Connect Spotify first to save a local refresh token and enable playback control."}
+            </p>
           </div>
+        </div>
+
+        <div className="music-toolbar">
+          <a className="toggle-btn" href={connectSpotifyHref}>
+            {spotifyTokenConnected
+              ? "Reconnect Spotify"
+              : "Connect Spotify (get token)"}
+          </a>
+
+          <button
+            className={
+              playbackKind === "playlist"
+                ? "toggle-btn active-btn"
+                : "toggle-btn"
+            }
+            type="button"
+            onClick={() => void onPlaylistMode()}
+          >
+            Playlist mode
+          </button>
+
+          <button
+            className={
+              playbackKind === "pool" ? "toggle-btn active-btn" : "toggle-btn"
+            }
+            type="button"
+            onClick={() => void onPoolMode()}
+          >
+            Pool mode
+          </button>
         </div>
 
         {playbackKind === "playlist" ? (
           <div className="music-grid">
-            <div className="card">
+            <div className="card music-card">
               <div className="card-label">Playback</div>
               <div className="big-text">Mood playlists</div>
             </div>
-            <div className="card">
+
+            <div className="card music-card">
               <div className="card-label">Active context (by mood)</div>
               <div className="big-text">{currentPlaylist}</div>
             </div>
-            <div className="card">
+
+            <div className="card music-card">
               <div className="card-label">Setup</div>
               <div className="small-text">
-                At the beginning, playlist mode is using the default playlist mapping; set your own
-                playlists above in the playlist mode button.
+                At the beginning, playlist mode is using the default playlist
+                mapping; set your own playlists above in the playlist mode
+                button.
               </div>
             </div>
           </div>
         ) : (
           <div className="music-grid">
-            <div className="card">
+            <div className="card music-card">
               <div className="card-label">Playback</div>
               <div className="big-text">CSV track pool</div>
             </div>
-            <div className="card">
+
+            <div className="card music-card">
               <div className="card-label">Behavior</div>
               <div className="small-text">
                 No setup step — neuro-rave picks nearest tracks from your pool
                 as EEG features update.
               </div>
             </div>
-            <div className="card">
+
+            <div className="card music-card">
               <div className="card-label">Mood</div>
-              <div className="big-text">{mood.replace(/_/g, " ")}</div>
+              <div className="big-text">
+                {mood.replace(/_/g, " ").toUpperCase()}
+              </div>
             </div>
           </div>
         )}
       </section>
 
-      <section className="panel">
-        <h2>Neuro Features</h2>
-        <div className="music-grid">
-          {neuroFeatureCards.map((feature) => (
-            <FeatureStatCard
-              key={feature.label}
-              label={feature.label}
-              value={feature.value}
-              subtitle={feature.subtitle}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="charts-grid">
+      <section className="history-grid">
         {history.length > 0 ? (
           <>
-            <TinyBarChart
+            <HistoryLineChart
               history={history}
               metricKey="energy"
               color="#f97316"
               title="Energy History"
             />
-            <TinyBarChart
+            <HistoryLineChart
               history={history}
               metricKey="focus"
               color="#34d399"
