@@ -28,7 +28,10 @@ from src.music_gen.spotify_controller import (
     propose_mood,
 )
 from src.music_gen.dashboard_playback_mode import read_dashboard_playback_mode
-from src.music_gen.dashboard_playback_pause import read_dashboard_playback_paused
+from src.music_gen.dashboard_playback_pause import (
+    read_dashboard_playback_paused,
+    write_dashboard_playback_paused,
+)
 from src.music_gen.spotify_mapping_store import mood_mapping_path
 from src.music_gen.spotify_playback_factory import build_playback_controller
 from src.music_gen.spotify_refresh_token import load_spotify_refresh_token
@@ -225,6 +228,13 @@ if __name__ == "__main__":
         )
     except Exception as exc:
         logger.warning("EEG WebSocket server not started: %s", exc)
+
+    # Always boot in live mode: clear any persisted dashboard pause lock from
+    # previous runs so neuro-driven playback updates are active immediately.
+    try:
+        write_dashboard_playback_paused(False)
+    except Exception as exc:
+        logger.warning("Failed to clear dashboard pause lock at startup: %s", exc)
 
     # ── EEG source ────────────────────────────────────────────────────────
     consumer: LSLConsumer | None = None

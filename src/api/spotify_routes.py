@@ -417,13 +417,15 @@ def _api_mode_label(stored: str) -> str:
 
 
 def _spotify_player_state(access_token: str) -> DashboardPlayerOut:
-    paused = read_dashboard_playback_paused()
     headers = {"Authorization": f"Bearer {access_token}"}
     resp = requests.get(
         f"{API_BASE_URL}/me/player/currently-playing",
         headers=headers,
         timeout=10,
     )
+    # Read after Spotify I/O: pause/resume can run on another thread while this blocks,
+    # and the dashboard polls /player and overwrites UI from this response.
+    paused = read_dashboard_playback_paused()
     if resp.status_code == 204:
         return DashboardPlayerOut(paused=paused, is_playing=False, progress_ms=None, track=None)
     if resp.status_code != 200:

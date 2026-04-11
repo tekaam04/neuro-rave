@@ -130,7 +130,6 @@ function formatDurationMs(ms?: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function TinyBarChart({
 function HistoryLineChart({
   history,
   metricKey,
@@ -183,7 +182,10 @@ function HistoryLineChart({
                 color: "#e2e8f0",
               }}
               labelStyle={{ color: "#cbd5e1" }}
-              formatter={(value: number) => [`${value}%`, title]}
+              formatter={(value) => {
+                const n = Number(value);
+                return [`${Number.isFinite(n) ? n : 0}%`, title];
+              }}
             />
             <Line
               type="monotone"
@@ -551,90 +553,6 @@ export default function LiveDashboard() {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="music-header">
-          <h2>Music Control Panel</h2>
-          <p className="small-text" style={{ margin: "0 0 6px 0" }}>
-            {spotifyTokenConnected
-              ? "Spotify token connected. You can control playback."
-              : "Connect Spotify first to save a local refresh token and enable playback control."}
-          </p>
-          <div className="button-row">
-            {spotifyTokenConnected ? (
-              <button className="toggle-btn" type="button" disabled>
-                Spotify connected
-              </button>
-            ) : (
-              <a className="toggle-btn" href={connectSpotifyHref}>
-                Connect Spotify (get token)
-              </a>
-            )}
-            <button
-              className="toggle-btn"
-              type="button"
-              onClick={() => void onUpdatePlaylist()}
-            >
-              Update playlist
-            </button>
-            <button
-              className={
-                playbackKind === "playlist"
-                  ? "toggle-btn active-btn"
-                  : "toggle-btn"
-              }
-              type="button"
-              onClick={() => void onPlaylistMode()}
-            >
-              Playlist mode
-            </button>
-            <button
-              className={
-                playbackKind === "pool" ? "toggle-btn active-btn" : "toggle-btn"
-              }
-              type="button"
-              onClick={() => void onPoolMode()}
-            >
-              Pool mode
-            </button>
-            <button
-              className="toggle-btn"
-              type="button"
-              disabled={playerActionBusy}
-              onClick={() =>
-                void (playbackPaused ? onResumePlayback() : onPausePlayback())
-              }
-            >
-              {playbackPaused ? "Resume playback" : "Pause playback"}
-            </button>
-          </div>
-        </div>
-
-        <div className="music-grid" style={{ marginBottom: 14 }}>
-          <div className="card">
-            <div className="card-label">Now playing</div>
-            <div className="big-text">{nowPlaying?.name ?? "No active track"}</div>
-            <div className="small-text">
-              {nowPlaying?.artists?.length
-                ? nowPlaying.artists.join(", ")
-                : "—"}
-            </div>
-          </div>
-          <div className="card">
-            <div className="card-label">Playback status</div>
-            <div className="big-text">
-              {playbackPaused
-                ? "Paused (locked)"
-                : isSpotifyPlaying
-                  ? "Playing"
-                  : "Idle"}
-            </div>
-            <div className="small-text">
-              Position: {formatDurationMs(nowPlayingProgressMs)}
-            </div>
-          </div>
-          <div className="card">
-            <div className="card-label">Album</div>
-            <div className="big-text">{nowPlaying?.album || "—"}</div>
       <section className="metrics-grid metrics-grid-four">
         <MetricCard label="Energy" value={energy} accent="#f97316" />
         <MetricCard label="Focus" value={focus} accent="#34d399" />
@@ -667,7 +585,13 @@ export default function LiveDashboard() {
               ? "Reconnect Spotify"
               : "Connect Spotify (get token)"}
           </a>
-
+          <button
+            className="toggle-btn"
+            type="button"
+            onClick={() => void onUpdatePlaylist()}
+          >
+            Update playlist
+          </button>
           <button
             className={
               playbackKind === "playlist"
@@ -679,7 +603,6 @@ export default function LiveDashboard() {
           >
             Playlist mode
           </button>
-
           <button
             className={
               playbackKind === "pool" ? "toggle-btn active-btn" : "toggle-btn"
@@ -689,6 +612,45 @@ export default function LiveDashboard() {
           >
             Pool mode
           </button>
+          <button
+            className="toggle-btn"
+            type="button"
+            disabled={playerActionBusy}
+            onClick={() =>
+              void (playbackPaused ? onResumePlayback() : onPausePlayback())
+            }
+          >
+            {playbackPaused ? "Resume playback" : "Pause playback"}
+          </button>
+        </div>
+
+        <div className="music-grid" style={{ marginBottom: 16 }}>
+          <div className="card music-card">
+            <div className="card-label">Now playing</div>
+            <div className="big-text">{nowPlaying?.name ?? "No active track"}</div>
+            <div className="small-text">
+              {nowPlaying?.artists?.length
+                ? nowPlaying.artists.join(", ")
+                : "—"}
+            </div>
+          </div>
+          <div className="card music-card">
+            <div className="card-label">Playback status</div>
+            <div className="big-text">
+              {playbackPaused
+                ? "Paused (locked)"
+                : isSpotifyPlaying
+                  ? "Playing"
+                  : "Idle"}
+            </div>
+            <div className="small-text">
+              Position: {formatDurationMs(nowPlayingProgressMs)}
+            </div>
+          </div>
+          <div className="card music-card">
+            <div className="card-label">Album</div>
+            <div className="big-text">{nowPlaying?.album || "—"}</div>
+          </div>
         </div>
 
         {playbackKind === "playlist" ? (
@@ -706,11 +668,8 @@ export default function LiveDashboard() {
             <div className="card music-card">
               <div className="card-label">Setup</div>
               <div className="small-text">
-                At the beginning, playlist mode is using the default playlist mapping; set your own
-                playlists above in the update playlist button.
-                At the beginning, playlist mode is using the default playlist
-                mapping; set your own playlists above in the playlist mode
-                button.
+                Playlist mode starts from the default mood → playlist mapping until
+                you set your own contexts using Update playlist.
               </div>
             </div>
           </div>
