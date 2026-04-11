@@ -207,7 +207,8 @@ Use this when the project already has a working Spotify app configured (someone 
 4. **Wake a device**  
    Open Spotify and press **Play** once so playback control can attach.
 
-On **`/`**, **Playlist mode** vs **Pool mode** changes how tracks are chosen; playlist mode may send you to **`/setup`**. The active mode is stored in **`config/dashboard_spotify_playback_mode.json`**.
+On **`/`**, **Playlist mode** vs **Pool mode** changes how tracks are chosen, and **Update playlist** opens **`/setup`** to edit mapping. Mode toggles do not navigate away. The active mode is stored in **`config/dashboard_spotify_playback_mode.json`**.
+The dashboard also includes **Now playing** info and **Pause/Resume playback**. While paused, neuro-driven track/context switching is locked (persisted at **`config/dashboard_spotify_pause_state.json`**).
 
 If **Connect Spotify** fails (redirect / **HTTP 400** / “not configured”), a **developer** must fix the Spotify app — see **For developers** below.
 
@@ -236,6 +237,7 @@ Change these when you use **your own** Spotify app or a new fork:
 **3. API port and OAuth**
 
 - OAuth callback and REST live on **`WS_PORT`** (see `config/constants.json`, default **8733**).
+- OAuth success redirect defaults to **`http://localhost:5173/`** (home dashboard) via **`SPOTIFY_OAUTH_SUCCESS_URL`**.
 - Flow uses **PKCE**. Persistent **HTTP 400** on login: see [Spotify OAuth migration](https://developer.spotify.com/blog/2025-10-14-reminder-oauth-migration-27-nov-2025); you may need **HTTPS** (e.g. ngrok), register that URL in Spotify, and align **`SPOTIFY_OAUTH_REDIRECT_URI`** / **`SPOTIFY_OAUTH_PUBLIC_HOST`** (see **`docker-compose.yml`** comments).
 
 **4. Playlist source precedence (playlist / context mode)**
@@ -298,12 +300,20 @@ SPOTIFY_PLAYBACK_MODE=pool
 # SPOTIFY_POOL_MIN_INTERVAL_S=10                      # default 10; min 10s enforced in code
 # SPOTIFY_POOL_TOP_K=8
 # SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=0                  # 1 = only change track when voted mood changes
+# SPOTIFY_POOL_NEAR_END_THRESHOLD=0.97                # switch near end of current track
+# SPOTIFY_POOL_END_DEBOUNCE_S=3                       # debounce end-trigger
+# SPOTIFY_POOL_URGENT_SWITCH=1                        # allow early switch on major mood change
+# SPOTIFY_POOL_URGENT_HOLD_S=20                       # min hold before urgent early switch
 # SPOTIFY_POOL_HISTORY=24
 # SPOTIFY_POOL_TEMPO_MIN=60   SPOTIFY_POOL_TEMPO_MAX=200
 # SPOTIFY_POOL_WEIGHT_ENERGY=1  SPOTIFY_POOL_WEIGHT_VALENCE=1  SPOTIFY_POOL_WEIGHT_TEMPO=0.85
+# SPOTIFY_SMOOTH_TRANSITIONS=1                        # fade down/up around switches
+# SPOTIFY_TRANSITION_SECONDS=6                        # total transition duration
+# SPOTIFY_FADE_STEPS=10                               # volume ramp steps
 ```
 
-**`SPOTIFY_POOL_MIN_INTERVAL_S`:** minimum seconds between new track picks (default **10**); lower for more frequent changes (watch rate limits / UX). **`SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=1`:** only change tracks when the **voted mood** changes (see earlier Q&A: playback end is not auto-detected).
+**Pool switching behavior:** track changes are primarily triggered near track end (`progress_ms / duration_ms >= SPOTIFY_POOL_NEAR_END_THRESHOLD`), with debounce (`SPOTIFY_POOL_END_DEBOUNCE_S`) and a stale-state fallback timer. Optional urgent early switch is controlled by `SPOTIFY_POOL_URGENT_SWITCH` + `SPOTIFY_POOL_URGENT_HOLD_S`.
+**Smooth handoff:** when `SPOTIFY_SMOOTH_TRANSITIONS=1`, transitions use a Spotify-native volume envelope (fade-down → switch → fade-up), not true dual-deck beatmatching.
 
 **Command-line mode (overrides `SPOTIFY_PLAYBACK_MODE` for this run)**
 

@@ -28,6 +28,7 @@ from src.music_gen.spotify_controller import (
     propose_mood,
 )
 from src.music_gen.dashboard_playback_mode import read_dashboard_playback_mode
+from src.music_gen.dashboard_playback_pause import read_dashboard_playback_paused
 from src.music_gen.spotify_mapping_store import mood_mapping_path
 from src.music_gen.spotify_playback_factory import build_playback_controller
 from src.music_gen.spotify_refresh_token import load_spotify_refresh_token
@@ -392,6 +393,8 @@ if __name__ == "__main__":
         _rebuild_spotify_if_needed()
         sp_ctrl = _spotify_rt["controller"]
         if sp_ctrl is not None:
+            if read_dashboard_playback_paused():
+                continue
             try:
                 sp_ctrl.update(spotify_features, stable_mood=mood)
             except Exception as exc:

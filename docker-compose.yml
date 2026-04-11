@@ -28,7 +28,7 @@ services:
       - SPOTIFY_OAUTH_REDIRECT_URI=${SPOTIFY_OAUTH_REDIRECT_URI:-}
       # Spotify forbids ``localhost`` in redirect URIs; use loopback IP (see Spotify docs Apr 2025).
       - SPOTIFY_OAUTH_PUBLIC_HOST=${SPOTIFY_OAUTH_PUBLIC_HOST:-127.0.0.1}
-      - SPOTIFY_OAUTH_SUCCESS_URL=${SPOTIFY_OAUTH_SUCCESS_URL:-http://localhost:5173/setup?spotify=connected}
+      - SPOTIFY_OAUTH_SUCCESS_URL=${SPOTIFY_OAUTH_SUCCESS_URL:-http://localhost:5173/}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
