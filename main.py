@@ -70,13 +70,36 @@ def bandpower(data):
 # ── EEG Processor ─────────────────────────────────────────────────────────────
 
 class EEGProcessor:
-    def __init__(self, window_seconds=1.0):
+    def __init__(self, window_seconds: float = 1.0):
+        self.window_seconds = float(window_seconds)
         self.buffer = MirrorCircleFIFO.from_seconds(
             seconds=window_seconds,
             sample_rate=const.SAMPLE_RATE,
             n_channels=const.N_CHANNELS,
         )
-        self.alpha_hist = []
+        self.alpha_hist: list[np.ndarray] = []
+
+        # Attention state (alpha-suppression sustained streak + rolling variability)
+        self._current_streak_sec: float = 0.0
+        self._variability_window_size: int = max(
+            1, round(float(const.ATTENTION_VARIABILITY_SEC) / self.window_seconds)
+        )
+        self._alpha_sup_history: list[float] = []
+
+    def _update_sustained_streak(self, alpha_sup_mean_norm: float) -> float:
+        if alpha_sup_mean_norm > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
+            self._current_streak_sec += self.window_seconds
+        else:
+            self._current_streak_sec = 0.0
+        return self._current_streak_sec
+
+    def _update_rolling_variability(self, alpha_sup_mean_norm: float) -> float | None:
+        self._alpha_sup_history.append(alpha_sup_mean_norm)
+        if len(self._alpha_sup_history) > self._variability_window_size:
+            self._alpha_sup_history.pop(0)
+        if len(self._alpha_sup_history) < self._variability_window_size:
+            return None
+        return float(np.std(self._alpha_sup_history))
 
     def process_window(self):
         data = self.buffer.data
@@ -108,6 +131,23 @@ class EEGProcessor:
                 0.0,
             )
 
+        # Attention indices use a locally-clipped 0-1 ratio (not the percent
+        # form used by FeaturesPacket / SpotifyFeaturePipeline).
+        alpha_sup_mean_norm = float(np.clip(np.mean(alpha_sup) / 100.0, 0.0, 1.0))
+        sustained_streak = self._update_sustained_streak(alpha_sup_mean_norm)
+        sustained_attention_index = min(
+            sustained_streak / float(const.ATTENTION_SUSTAINED_SEC), 1.0
+        )
+        is_attentive = sustained_streak >= float(const.ATTENTION_SUSTAINED_SEC)
+        rolling_variability = self._update_rolling_variability(alpha_sup_mean_norm)
+        energy_index: float | None
+        if rolling_variability is None:
+            energy_index = None
+        else:
+            energy_index = min(
+                rolling_variability / float(const.ATTENTION_VARIABILITY_MAX), 1.0
+            )
+
         return {
             "theta": theta_power,
             "alpha": alpha_power,
@@ -115,6 +155,11 @@ class EEGProcessor:
             "gamma": gamma_power,
             "theta_beta_ratio": theta_beta,
             "alpha_suppression": alpha_sup,
+            "sustained_streak_sec": sustained_streak,
+            "sustained_attention_index": sustained_attention_index,
+            "is_attentive": is_attentive,
+            "rolling_variability": rolling_variability,
+            "energy_index": energy_index,
         }
 
 
@@ -363,20 +408,46 @@ if __name__ == "__main__":
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
+    _hb_empty_iters = 0
+    _hb_fill_iters = 0
+    _hb_last_log = time.monotonic()
+
     while True:
         if const.SIMULATE:
             samples = generate_sim_chunk()
             time.sleep(const.WINDOW_SIZE / const.SAMPLE_RATE)
         else:
             assert consumer is not None
-            samples, ts = consumer.get_chunk()
+            # Small timeout lets pylsl block briefly instead of spinning and
+            # gives the inlet a chance to deliver samples before we bail out.
+            samples, ts = consumer.get_chunk(timeout=0.5)
             if len(samples) == 0:
+                _hb_empty_iters += 1
+                now_hb = time.monotonic()
+                if now_hb - _hb_last_log >= 5.0:
+                    logger.info(
+                        "HEARTBEAT: main loop alive — empty_iters=%d fill_iters=%d buffer.full=%s",
+                        _hb_empty_iters,
+                        _hb_fill_iters,
+                        processor.buffer.full,
+                    )
+                    _hb_last_log = now_hb
                 time.sleep(0.01)
                 continue
 
         processor.buffer.add_chunk(np.asarray(samples, dtype=np.float32))
+        _hb_fill_iters += 1
 
         if not processor.buffer.full:
+            now_hb = time.monotonic()
+            if now_hb - _hb_last_log >= 5.0:
+                logger.info(
+                    "HEARTBEAT: filling — samples=%d empty_iters=%d fill_iters=%d",
+                    len(samples),
+                    _hb_empty_iters,
+                    _hb_fill_iters,
+                )
+                _hb_last_log = now_hb
             continue
 
         eeg_features = processor.process_window()
@@ -386,11 +457,16 @@ if __name__ == "__main__":
         proposed = propose_mood(spotify_features)
         mood = mood_stabilizer.majority_mood(proposed)
 
+        e_idx = eeg_features.get("energy_index")
         logger.info(
-            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | e_in=%.2f f_in=%.2f | "
+            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | streak=%.1fs attentive=%s "
+            "e_idx=%s | e_in=%.2f f_in=%.2f | "
             "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
             float(np.mean(eeg_features["theta_beta_ratio"])),
             float(np.mean(eeg_features["alpha_suppression"])),
+            float(eeg_features.get("sustained_streak_sec", 0.0)),
+            bool(eeg_features.get("is_attentive", False)),
+            f"{float(e_idx):.2f}" if e_idx is not None else "warm-up",
             raw_feat.energy,
             raw_feat.focus,
             spotify_features.energy,

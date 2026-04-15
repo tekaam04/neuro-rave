@@ -30,8 +30,14 @@ class FeaturesPacket:
     energy:    float
     focus:     float
     mood:      str
-    theta_beta_ratio:    float
-    alpha_suppression:   float
+    theta_beta_ratio:          float
+    alpha_suppression:         float
+    # Attention features (main_with_signal.py merge). Defaults keep older
+    # callers working; warm-up windows emit 0.0 until history fills.
+    sustained_attention_index: float = 0.0
+    energy_index:              float = 0.0
+    is_attentive:              bool  = False
+    sustained_streak_sec:      float = 0.0
     type:      str = field(default="features", init=False)
 
     def to_json(self) -> str:

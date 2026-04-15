@@ -4,8 +4,8 @@ services:
     ports:
       - "8733:8733"
     environment:
-      # Default 0 = real EEG (BioSemi TCP / LSL path). For demos without hardware: SIMULATE=1 in .env.
-      - SIMULATE=${SIMULATE:-0}
+      # SIMULATE is read from config/constants.json. Set SIMULATE=1 in .env if you
+      # need a per-environment override (it takes precedence over the JSON value).
       - BIOSEMI_HOST=host.docker.internal
       - WS_HOST=0.0.0.0
       - WS_PORT=8733

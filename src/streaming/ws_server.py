@@ -54,6 +54,16 @@ class EEGWebSocketServer:
         self._feat_alpha_hist: list[np.ndarray] = []
         self._spotify_pipeline = SpotifyFeaturePipeline()
 
+        # Attention state (mirrors main.EEGProcessor). _features_loop runs at
+        # ~1 Hz, so window_seconds==1.0 for these state updates.
+        self._feat_window_seconds: float = 1.0
+        self._feat_current_streak_sec: float = 0.0
+        self._feat_variability_window_size: int = max(
+            1,
+            round(float(const.ATTENTION_VARIABILITY_SEC) / self._feat_window_seconds),
+        )
+        self._feat_alpha_sup_history: list[float] = []
+
         self.app = FastAPI(lifespan=self._lifespan)
         # --- BEGIN agent-added: CORS + mount /spotify/* routers ---
         self.app.add_middleware(
@@ -187,6 +197,30 @@ class EEGWebSocketServer:
                 0.0,
             )
 
+        # Attention indices: streak / rolling variability of clipped 0-1 alpha sup.
+        alpha_sup_mean_norm = float(np.clip(np.mean(alpha_sup) / 100.0, 0.0, 1.0))
+        if alpha_sup_mean_norm > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
+            self._feat_current_streak_sec += self._feat_window_seconds
+        else:
+            self._feat_current_streak_sec = 0.0
+        sustained_streak_sec = self._feat_current_streak_sec
+        sustained_attention_index = min(
+            sustained_streak_sec / float(const.ATTENTION_SUSTAINED_SEC), 1.0
+        )
+        is_attentive = sustained_streak_sec >= float(const.ATTENTION_SUSTAINED_SEC)
+
+        self._feat_alpha_sup_history.append(alpha_sup_mean_norm)
+        if len(self._feat_alpha_sup_history) > self._feat_variability_window_size:
+            self._feat_alpha_sup_history.pop(0)
+        if len(self._feat_alpha_sup_history) < self._feat_variability_window_size:
+            rolling_variability: float | None = None
+            energy_index: float | None = None
+        else:
+            rolling_variability = float(np.std(self._feat_alpha_sup_history))
+            energy_index = min(
+                rolling_variability / float(const.ATTENTION_VARIABILITY_MAX), 1.0
+            )
+
         eeg_features = {
             "theta": theta_power,
             "alpha": alpha_power,
@@ -194,6 +228,11 @@ class EEGWebSocketServer:
             "gamma": gamma_power,
             "theta_beta_ratio": theta_beta,
             "alpha_suppression": alpha_sup,
+            "sustained_streak_sec": sustained_streak_sec,
+            "sustained_attention_index": sustained_attention_index,
+            "is_attentive": is_attentive,
+            "rolling_variability": rolling_variability,
+            "energy_index": energy_index,
         }
         nf = self._spotify_pipeline.process(eeg_features)
         mood = propose_mood(NeuroFeatures(energy=nf.energy, focus=nf.focus, d_energy=0.0))
@@ -206,6 +245,10 @@ class EEGWebSocketServer:
             mood=mood,
             theta_beta_ratio=tb_mean,
             alpha_suppression=alpha_sup_mean,
+            sustained_attention_index=float(sustained_attention_index),
+            energy_index=float(energy_index) if energy_index is not None else 0.0,
+            is_attentive=bool(is_attentive),
+            sustained_streak_sec=float(sustained_streak_sec),
         )
 
     async def _features_loop(self) -> None:

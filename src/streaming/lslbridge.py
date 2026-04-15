@@ -87,12 +87,15 @@ class LSLConsumer:
     def __init__(self, stream_type="EEG"):
         streams = resolve_stream('type', stream_type)
         self._inlet = StreamInlet(streams[0])
+        # Force the inlet to open immediately so the first pull doesn't return
+        # empty while the background thread is still negotiating the stream.
+        self._inlet.open_stream()
 
     def get_sample(self):
         return self._inlet.pull_sample()
 
-    def get_chunk(self, max_samples=512):
-        return self._inlet.pull_chunk(max_samples=max_samples)
+    def get_chunk(self, max_samples=512, timeout=0.0):
+        return self._inlet.pull_chunk(timeout=timeout, max_samples=max_samples)
     
 def _stream_loop(tcpsource, decoder, lslpub):
     while True:

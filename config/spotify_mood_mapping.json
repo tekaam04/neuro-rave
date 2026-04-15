@@ -1,18 +1,10 @@
 {
   "user_id": "default",
-  "calm_uri": "spotify:playlist:3NCraFbyGknolDJMxjf7bw",
-  "calm": [
-    "spotify:playlist:3NCraFbyGknolDJMxjf7bw",
-    "spotify:playlist:6OpvhaJmmbdhqjplBKUGeJ"
-  ],
-  "focus_uri": "spotify:album:526GOHUzH201xPsVWgBi1s",
-  "focus": [
-    "spotify:album:526GOHUzH201xPsVWgBi1s",
-    "spotify:playlist:37i9dQZF1DWZeKCadgRdKQ"
-  ],
-  "hype_uri": "spotify:playlist:37i9dQZF1DX76Wlfdnj7AP",
-  "hype": [
-    "spotify:playlist:37i9dQZF1DX76Wlfdnj7AP",
-    "spotify:playlist:7eEfJz9b3a1wS2jSyOvRvg"
-  ]
+  "calm_uri": "spotify:playlist:6mtAo2kuefT9vEun2SfwMa",
+  "calm": "spotify:playlist:6mtAo2kuefT9vEun2SfwMa",
+  "focus_uri": "spotify:playlist:2OVw0npouPykZjdBikQhYv",
+  "focus": "spotify:playlist:2OVw0npouPykZjdBikQhYv",
+  "hype_uri": "spotify:playlist:1Z85xhm8gkBYnI47BIHJ7B",
+  "hype": "spotify:playlist:1Z85xhm8gkBYnI47BIHJ7B",
+  "deep_focus": "spotify:playlist:3dvpNnP0G6OgrDJMF1CpsY"
 }
