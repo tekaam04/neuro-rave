@@ -103,7 +103,7 @@ class SpotifyFeaturePipeline:
         tb_mean = float(np.mean(eeg_features["theta_beta_ratio"]))
         focus = focus_from_theta_beta_mean(tb_mean)
 
-        # Blend alpha-suppression attention indices (main_with_signal.py model)
+        # Blend alpha-suppression attention indices from the current mood model
         # when they're available. Warm-up windows return None -> skip the blend.
         e_idx = eeg_features.get("energy_index")
         if e_idx is not None:

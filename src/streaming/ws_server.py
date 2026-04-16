@@ -33,8 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from scipy.signal import butter, lfilter, iirnotch
 from src.api.spotify_routes import router as spotify_router
 import src.constants as const
-from src.music_gen.spotify_controller import NeuroFeatures, propose_mood
-from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
+from src.music_gen.spotify_controller import MoodStabilizer, NeuroFeatures, propose_mood
 from src.streaming.lslbridge import LSLConsumer
 from src.streaming.packets import RawPacket, FeaturesPacket
 from src.processing.fifo import MirrorCircleFIFO
@@ -52,7 +51,7 @@ class EEGWebSocketServer:
         self._features_buf = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
         self._features_dirty = False
         self._feat_alpha_hist: list[np.ndarray] = []
-        self._spotify_pipeline = SpotifyFeaturePipeline()
+        self._mood_stabilizer = MoodStabilizer()
 
         # Attention state (mirrors main.EEGProcessor). _features_loop runs at
         # ~1 Hz, so window_seconds==1.0 for these state updates.
@@ -221,31 +220,26 @@ class EEGWebSocketServer:
                 rolling_variability / float(const.ATTENTION_VARIABILITY_MAX), 1.0
             )
 
-        eeg_features = {
-            "theta": theta_power,
-            "alpha": alpha_power,
-            "beta": beta_power,
-            "gamma": gamma_power,
-            "theta_beta_ratio": theta_beta,
-            "alpha_suppression": alpha_sup,
-            "sustained_streak_sec": sustained_streak_sec,
-            "sustained_attention_index": sustained_attention_index,
-            "is_attentive": is_attentive,
-            "rolling_variability": rolling_variability,
-            "energy_index": energy_index,
-        }
-        nf = self._spotify_pipeline.process(eeg_features)
-        mood = propose_mood(NeuroFeatures(energy=nf.energy, focus=nf.focus, d_energy=0.0))
+        # Match the current `main.py` mood logic:
+        # mood is driven by (energy_index, sustained_attention_index) smoothed via
+        # MoodStabilizer and then majority-voted for stability.
+        raw_energy = float(energy_index) if energy_index is not None else 0.5
+        raw_focus = float(sustained_attention_index)
+
+        se, sf, d_e = self._mood_stabilizer.smooth(raw_energy, raw_focus)
+        proposed = propose_mood(NeuroFeatures(energy=se, focus=sf, d_energy=d_e))
+        mood = self._mood_stabilizer.majority_mood(proposed)
+
         tb_mean = float(np.mean(theta_beta))
         alpha_sup_mean = float(np.mean(alpha_sup))
         return FeaturesPacket(
             timestamp=0.0,
-            energy=nf.energy,
-            focus=nf.focus,
+            energy=se,
+            focus=sf,
             mood=mood,
             theta_beta_ratio=tb_mean,
             alpha_suppression=alpha_sup_mean,
-            sustained_attention_index=float(sustained_attention_index),
+            sustained_attention_index=raw_focus,
             energy_index=float(energy_index) if energy_index is not None else 0.0,
             is_attentive=bool(is_attentive),
             sustained_streak_sec=float(sustained_streak_sec),

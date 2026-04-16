@@ -32,7 +32,7 @@ class FeaturesPacket:
     mood:      str
     theta_beta_ratio:          float
     alpha_suppression:         float
-    # Attention features (main_with_signal.py merge). Defaults keep older
+    # Attention features from the current mood model. Defaults keep older
     # callers working; warm-up windows emit 0.0 until history fills.
     sustained_attention_index: float = 0.0
     energy_index:              float = 0.0

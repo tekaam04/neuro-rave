@@ -181,12 +181,9 @@ class SpotifyNeuroPoolController:
         self._validate_pool_slice(now)
         end_trigger = self._should_switch_on_track_end(now)
         urgent_trigger = self._should_force_urgent_switch(now, stable_mood)
+        first_play = self._last_play_at <= 0.0
 
-        if not end_trigger and not urgent_trigger:
-            # Safety fallback in case player-state polling is stale.
-            if now - self._last_play_at < max(30.0, self._min_interval_s):
-                return
-
+        if not first_play and not end_trigger and not urgent_trigger:
             if self._mood_gate:
                 mood = stable_mood
                 if mood is None:
@@ -194,6 +191,13 @@ class SpotifyNeuroPoolController:
                 if mood == self._last_mood:
                     return
                 self._last_mood = mood
+            else:
+                return
+
+        if self._mood_gate and stable_mood is not None and (
+            first_play or end_trigger or urgent_trigger
+        ):
+            self._last_mood = stable_mood
 
         targets = neuro_features_to_pool_targets(features)
         for _ in range(3):

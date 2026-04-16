@@ -253,20 +253,6 @@ export default function LiveDashboard() {
   const connectionStatusText = connected
     ? "Connected to EEG stream"
     : "Connecting to EEG stream...";
-  const thetaBetaRatio = features?.theta_beta_ratio ?? 0;
-  const alphaSuppression = features?.alpha_suppression ?? 0;
-  const neuroFeatureCards = [
-    {
-      label: "Theta / Beta Ratio",
-      value: thetaBetaRatio,
-      subtitle: "Attention-related feature from live EEG stream",
-    },
-    {
-      label: "Alpha Suppression",
-      value: alphaSuppression,
-      subtitle: "Engagement-related feature from live EEG stream",
-    },
-  ];
   const currentPlaylist = useMemo(
     () => playlistLabel(mood, spotifyLabels),
     [mood, spotifyLabels],
@@ -553,18 +539,9 @@ export default function LiveDashboard() {
         </div>
       </section>
 
-      <section className="metrics-grid metrics-grid-four">
+      <section className="metrics-grid">
         <MetricCard label="Energy" value={energy} accent="#f97316" />
         <MetricCard label="Focus" value={focus} accent="#34d399" />
-
-        {neuroFeatureCards.map((feature) => (
-          <FeatureStatCard
-            key={feature.label}
-            label={feature.label}
-            value={feature.value}
-            subtitle={feature.subtitle}
-          />
-        ))}
       </section>
 
       <section className="music-section">

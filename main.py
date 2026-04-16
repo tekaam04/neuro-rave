@@ -20,7 +20,6 @@ from scipy.signal import butter, lfilter, iirnotch
 
 from src.processing.fifo import MirrorCircleFIFO
 import src.constants as const
-from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 from src.music_gen.spotify_controller import (
     MoodStabilizer,
     NeuroFeatures as SpotifyNeuroFeatures,
@@ -45,10 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 
 # ── EEG Band definitions ─────────────────────────────────────────────────────
 
-THETA = (4, 8)
 ALPHA = (8, 13)
-BETA = (13, 30)
-GAMMA = (30, 100)
 
 
 # ── DSP helpers ───────────────────────────────────────────────────────────────
@@ -86,15 +82,15 @@ class EEGProcessor:
         )
         self._alpha_sup_history: list[float] = []
 
-    def _update_sustained_streak(self, alpha_sup_mean_norm: float) -> float:
-        if alpha_sup_mean_norm > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
+    def _update_sustained_streak(self, alpha_sup_mean: float) -> float:
+        if alpha_sup_mean > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
             self._current_streak_sec += self.window_seconds
         else:
             self._current_streak_sec = 0.0
         return self._current_streak_sec
 
-    def _update_rolling_variability(self, alpha_sup_mean_norm: float) -> float | None:
-        self._alpha_sup_history.append(alpha_sup_mean_norm)
+    def _update_rolling_variability(self, alpha_sup_mean: float) -> float | None:
+        self._alpha_sup_history.append(alpha_sup_mean)
         if len(self._alpha_sup_history) > self._variability_window_size:
             self._alpha_sup_history.pop(0)
         if len(self._alpha_sup_history) < self._variability_window_size:
@@ -107,39 +103,30 @@ class EEGProcessor:
         data = notch(data, 60, const.SAMPLE_RATE)
         data = bandpass(data, 1, 100, const.SAMPLE_RATE)
 
-        theta = bandpass(data, THETA[0], THETA[1], const.SAMPLE_RATE)
         alpha = bandpass(data, ALPHA[0], ALPHA[1], const.SAMPLE_RATE)
-        beta = bandpass(data, BETA[0], BETA[1], const.SAMPLE_RATE)
-        gamma = bandpass(data, GAMMA[0], GAMMA[1], const.SAMPLE_RATE)
 
         self.alpha_hist.append(alpha.copy())
 
-        theta_power = bandpower(theta)
         alpha_power = bandpower(alpha)
-        beta_power = bandpower(beta)
-        gamma_power = bandpower(gamma)
 
-        theta_beta = np.where(beta_power > 0, theta_power / beta_power, 0.0)
-
-        alpha_sup = np.zeros(const.N_CHANNELS)
+        alpha_sup_raw = np.zeros(const.N_CHANNELS)
         if len(self.alpha_hist) > 5:
             baseline_data = np.concatenate(self.alpha_hist[:5], axis=0)
             baseline = np.mean(baseline_data ** 2, axis=0)
-            alpha_sup = np.where(
+            alpha_sup_raw = np.where(
                 baseline > 0,
-                (baseline - alpha_power) / baseline * 100,
+                (baseline - alpha_power) / baseline,
                 0.0,
             )
+        alpha_sup = np.clip(alpha_sup_raw, 0.0, 1.0)
 
-        # Attention indices use a locally-clipped 0-1 ratio (not the percent
-        # form used by FeaturesPacket / SpotifyFeaturePipeline).
-        alpha_sup_mean_norm = float(np.clip(np.mean(alpha_sup) / 100.0, 0.0, 1.0))
-        sustained_streak = self._update_sustained_streak(alpha_sup_mean_norm)
+        alpha_sup_mean = float(np.mean(alpha_sup))
+        sustained_streak = self._update_sustained_streak(alpha_sup_mean)
         sustained_attention_index = min(
             sustained_streak / float(const.ATTENTION_SUSTAINED_SEC), 1.0
         )
         is_attentive = sustained_streak >= float(const.ATTENTION_SUSTAINED_SEC)
-        rolling_variability = self._update_rolling_variability(alpha_sup_mean_norm)
+        rolling_variability = self._update_rolling_variability(alpha_sup_mean)
         energy_index: float | None
         if rolling_variability is None:
             energy_index = None
@@ -149,12 +136,8 @@ class EEGProcessor:
             )
 
         return {
-            "theta": theta_power,
-            "alpha": alpha_power,
-            "beta": beta_power,
-            "gamma": gamma_power,
-            "theta_beta_ratio": theta_beta,
             "alpha_suppression": alpha_sup,
+            "alpha_sup_mean": alpha_sup_mean,
             "sustained_streak_sec": sustained_streak,
             "sustained_attention_index": sustained_attention_index,
             "is_attentive": is_attentive,
@@ -180,11 +163,57 @@ def _sim_phase_name(elapsed: float) -> str:
     return "hype"
 
 
+def _sim_phase_blend(elapsed: float) -> tuple[str, str | None, float]:
+    plen = max(5.0, float(const.SIM_PHASE_SECONDS))
+    phases = ("calm", "focus", "hype")
+    cycle = elapsed % (3.0 * plen)
+    idx = min(int(cycle // plen), 2)
+    phase = phases[idx]
+    next_phase = phases[(idx + 1) % len(phases)]
+    pos = cycle - (idx * plen)
+    blend_sec = min(6.0, plen / 4.0)
+    if pos < (plen - blend_sec):
+        return phase, None, 0.0
+    w = np.clip((pos - (plen - blend_sec)) / blend_sec, 0.0, 1.0)
+    return phase, next_phase, float(w)
+
+
+def _sim_phase_signal(phase: str, t: np.ndarray, ch_idx: int) -> np.ndarray:
+    phase_offset = 0.35 * ch_idx
+    if phase == "calm":
+        alpha_env = 1.0 + 0.03 * np.sin(2 * np.pi * 0.05 * t + phase_offset)
+        sig = (
+            (1.05 * alpha_env) * np.sin(2 * np.pi * 10.0 * t)
+            + 0.30 * np.sin(2 * np.pi * 9.0 * t + 0.2)
+            + 0.04 * np.sin(2 * np.pi * 18.0 * t + 0.1)
+        )
+        noise = 0.035
+    elif phase == "focus":
+        alpha_env = 1.0 + 0.05 * np.sin(2 * np.pi * 0.08 * t + phase_offset)
+        sig = (
+            (0.72 * alpha_env) * np.sin(2 * np.pi * 10.0 * t)
+            + 0.26 * np.sin(2 * np.pi * 18.0 * t + 0.15)
+            + 0.06 * np.sin(2 * np.pi * 22.0 * t + 0.3)
+        )
+        noise = 0.045
+    else:
+        alpha_env = 0.35 + 0.18 * np.sin(2 * np.pi * 0.32 * t + phase_offset)
+        sig = (
+            alpha_env * np.sin(2 * np.pi * 10.0 * t)
+            + 0.62 * np.sin(2 * np.pi * 24.0 * t + 0.1)
+            + 0.40 * np.sin(2 * np.pi * 32.0 * t + 0.25)
+        )
+        noise = 0.07
+    return sig + noise * np.random.default_rng().standard_normal(t.shape[0])
+
+
 def generate_sim_chunk() -> np.ndarray:
     """Rotate calm → focus → hype every ``SIM_PHASE_SECONDS`` (wall clock).
 
-    Band content is engineered so bandpower / theta-beta land in ranges that
-    map to each mood after the real ``EEGProcessor`` pipeline.
+    calm  -> high alpha power  -> low suppression  -> low focus, low energy
+    focus -> moderate alpha    -> sustained focus  -> lower energy than hype
+    hype  -> suppressed alpha  -> high suppression -> high focus from streak,
+                                                    high energy from variability
     """
     global _sim_clock_t0, _sim_abs_time, _sim_last_phase
 
@@ -203,37 +232,21 @@ def generate_sim_chunk() -> np.ndarray:
 
     fs = float(const.SAMPLE_RATE)
     n = int(const.WINDOW_SIZE)
-    rng = np.random.default_rng()
 
     t0 = _sim_abs_time
     t_vec = np.arange(n, dtype=np.float64) / fs + t0
     _sim_abs_time += n / fs
 
+    phase_a, phase_b, blend = _sim_phase_blend(elapsed)
     out = np.zeros((n, const.N_CHANNELS), dtype=np.float32)
     for c in range(const.N_CHANNELS):
         t = t_vec * (1.0 + 0.015 * c)
-        if phase == "calm":
-            # Alpha/theta-heavy, low beta → higher theta/beta, lower “energy” after pipeline
-            sig = (
-                1.2 * np.sin(2 * np.pi * 10.0 * t)
-                + 0.42 * np.sin(2 * np.pi * 6.5 * t)
-                + 0.28 * np.sin(2 * np.pi * 4.0 * t)
-            )
-        elif phase == "focus":
-            # Beta-rich with moderate alpha → lower theta/beta, mid energy
-            sig = (
-                0.52 * np.sin(2 * np.pi * 18.5 * t)
-                + 0.48 * np.sin(2 * np.pi * 12.0 * t)
-                + 0.22 * np.sin(2 * np.pi * 10.0 * t)
-            )
+        sig_a = _sim_phase_signal(phase_a, t, c)
+        if phase_b is None:
+            sig = sig_a
         else:
-            # Beta + high-frequency content → high beta/gamma, high energy
-            sig = (
-                0.48 * np.sin(2 * np.pi * 24.0 * t)
-                + 0.42 * np.sin(2 * np.pi * 32.0 * t)
-                + 0.38 * np.sin(2 * np.pi * 38.0 * t)
-            )
-        sig = sig + rng.standard_normal(n) * 0.11
+            sig_b = _sim_phase_signal(phase_b, t, c)
+            sig = (1.0 - blend) * sig_a + blend * sig_b
         out[:, c] = sig.astype(np.float32)
     return out
 
@@ -404,7 +417,6 @@ if __name__ == "__main__":
             logger.info("Spotify controller active mode=%s key=%s", mode, key)
 
     mood_stabilizer = MoodStabilizer()
-    spotify_feature_pipeline = SpotifyFeaturePipeline()
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
@@ -451,24 +463,25 @@ if __name__ == "__main__":
             continue
 
         eeg_features = processor.process_window()
-        raw_feat = spotify_feature_pipeline.process(eeg_features)
-        se, sf, d_e = mood_stabilizer.smooth(raw_feat.energy, raw_feat.focus)
+        raw_energy = eeg_features.get("energy_index")
+        raw_focus = eeg_features.get("sustained_attention_index")
+        # During warm-up, rolling variability is not available yet, so use a
+        # neutral energy of 0.5.
+        raw_energy = float(raw_energy) if raw_energy is not None else 0.5
+        raw_focus = float(raw_focus) if raw_focus is not None else 0.0
+
+        se, sf, d_e = mood_stabilizer.smooth(raw_energy, raw_focus)
         spotify_features = SpotifyNeuroFeatures(energy=se, focus=sf, d_energy=d_e)
         proposed = propose_mood(spotify_features)
         mood = mood_stabilizer.majority_mood(proposed)
 
         e_idx = eeg_features.get("energy_index")
         logger.info(
-            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | streak=%.1fs attentive=%s "
             "e_idx=%s | e_in=%.2f f_in=%.2f | "
             "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
-            float(np.mean(eeg_features["theta_beta_ratio"])),
-            float(np.mean(eeg_features["alpha_suppression"])),
-            float(eeg_features.get("sustained_streak_sec", 0.0)),
-            bool(eeg_features.get("is_attentive", False)),
             f"{float(e_idx):.2f}" if e_idx is not None else "warm-up",
-            raw_feat.energy,
-            raw_feat.focus,
+            raw_energy,
+            raw_focus,
             spotify_features.energy,
             spotify_features.focus,
             d_e,

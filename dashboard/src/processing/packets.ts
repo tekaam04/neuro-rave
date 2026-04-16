@@ -18,7 +18,7 @@ export interface FeaturesPacket extends BasePacket {
   mood:                        string
   theta_beta_ratio:            number
   alpha_suppression:           number
-  // Attention features (main_with_signal.py merge); optional for older servers.
+  // Attention features from the current mood model; optional for older servers.
   sustained_attention_index?:  number
   energy_index?:               number
   is_attentive?:               boolean

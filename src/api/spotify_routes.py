@@ -90,6 +90,14 @@ OAUTH_SCOPES = [
 # state -> (expiry_unix, pkce_code_verifier)
 _oauth_states: Dict[str, tuple[float, str]] = {}
 
+# Simple in-process cache so the dashboard poll doesn't hammer Spotify's
+# token endpoint every few seconds. This only affects calls that go through
+# `refresh_access_token` (e.g. /spotify/dashboard/*); the long-running
+# main loop still uses its own SpotifyClient refresh logic.
+_cached_access_token: str | None = None
+_cached_expires_at: float = 0.0
+_cached_refresh_token: str | None = None
+
 
 def _pkce_verifier_and_challenge() -> tuple[str, str]:
     """RFC 7636 S256: verifier 43–128 chars; challenge = BASE64URL(SHA256(verifier)) without padding."""
@@ -157,6 +165,17 @@ def get_spotify_user_context() -> SpotifyUserContext:
 
 
 def refresh_access_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+    global _cached_access_token, _cached_expires_at, _cached_refresh_token
+
+    now = time.time()
+    # Reuse a still-valid cached token when the refresh token matches.
+    if (
+        _cached_access_token
+        and _cached_refresh_token == refresh_token
+        and now < _cached_expires_at - 30.0  # small safety margin
+    ):
+        return _cached_access_token
+
     auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
     resp = requests.post(
         TOKEN_URL,
@@ -174,10 +193,24 @@ def refresh_access_token(client_id: str, client_secret: str, refresh_token: str)
         # Spotify may rotate refresh tokens; persist immediately for local runs.
         save_spotify_refresh_token_to_file(rotated)
         logger.info("Spotify refresh token rotated and saved locally.")
+        _cached_refresh_token = rotated
+    else:
+        _cached_refresh_token = refresh_token
+
     token = data.get("access_token")
     if not token:
         raise HTTPException(status_code=500, detail="Spotify token response missing access_token")
-    return str(token)
+
+    # Cache the new access token with an approximate expiry.
+    # Spotify returns `expires_in` in seconds; default to 3600 if missing.
+    try:
+        ttl = float(data.get("expires_in", 3600) or 3600)
+    except (TypeError, ValueError):
+        ttl = 3600.0
+    _cached_access_token = str(token)
+    _cached_expires_at = now + ttl
+
+    return _cached_access_token
 
 
 def spotify_get_playlists(access_token: str) -> List[dict]:
