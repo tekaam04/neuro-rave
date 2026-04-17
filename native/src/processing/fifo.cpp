@@ -3,184 +3,238 @@
 #include <string>
 #include <stdexcept>
 #include <algorithm>
+#include <cmath>
 #include "fifo.h"
-
-bool isPowerOfTwo(int n) {
-    return (n != 0) && ((n & (n - 1)) == 0);
-}
 
 int secondsToSamples(float seconds, int sampleRate) {
     return int(seconds * sampleRate);
 }
 
 float samplesToSeconds(int samples, int sampleRate) {
-     return samples / float(sampleRate);
+    return samples / float(sampleRate);
 }
 
-void applyWindow(const ChannelArrayView& data, const std::string& windowType);
+// ─── Window generation ──────────────────────────────────────────────────────
 
-// FIFO base class
-FIFO::FIFO(int size, const std::string& channelName)
-    : size(size), mask(size - 1), channelName(channelName), data(size, 0.f), writeIdx(0) {
-    if (!isPowerOfTwo(size)) {
-        throw std::invalid_argument(
-            "FIFO size (" + std::to_string(size) + ") must be a power of two");
+void generateHannWindow(std::span<float> out) {
+    int n = static_cast<int>(out.size());
+    for (int i = 0; i < n; i++) {
+        out[i] = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (n - 1)));
     }
 }
 
-void FIFO::validateRange(int begin, int end, int maxSize, const std::string& name) {
-    if (begin < 0 || end > maxSize || begin > end) {
-        throw std::out_of_range(
-            name + " range [" + std::to_string(begin) + ":" + std::to_string(end) +
-            "] out of bounds for size " + std::to_string(maxSize));
+void generateHammingWindow(std::span<float> out) {
+    int n = static_cast<int>(out.size());
+    for (int i = 0; i < n; i++) {
+        out[i] = 0.54f - 0.46f * std::cos(2.0f * M_PI * i / (n - 1));
     }
 }
 
-void FIFO::writeDataByRange(std::span<const float> source,
-                             int sourceBegin, int sourceEnd,
-                             int dataBegin) {
-    if (sourceEnd == -1) sourceEnd = static_cast<int>(source.size());
-    int copyLen = sourceEnd - sourceBegin;
+void applyWindow(const ChannelArrayView& data, std::span<const float> coeffs) {
+    int nFrames = data.numFrames();
+    int nCoeffs = static_cast<int>(coeffs.size());
+    int n = nFrames < nCoeffs ? nFrames : nCoeffs;
 
-    validateRange(sourceBegin, sourceEnd, static_cast<int>(source.size()), "source");
-    validateRange(dataBegin, dataBegin + copyLen, static_cast<int>(data.size()), "data");
-
-    std::copy(source.begin() + sourceBegin, source.begin() + sourceEnd,
-              data.begin() + dataBegin);
+    for (int ch = 0; ch < data.numChannels(); ch++) {
+        std::span<float> chan = data.channel(ch);
+        for (int i = 0; i < n; i++) {
+            chan[i] *= coeffs[i];
+        }
+    }
 }
 
-void FIFO::readDataByRange(std::span<float> result,
-                            int dataBegin, int dataEnd,
-                            int resultBegin) const {
-    if (dataEnd == -1) dataEnd = static_cast<int>(data.size());
-    int copyLen = dataEnd - dataBegin;
+void applyWindow(const ChannelArrayView& data, const std::string& windowType) {
+    if (windowType == "rectangular") return;
 
-    validateRange(dataBegin, dataEnd, static_cast<int>(data.size()), "data");
-    validateRange(resultBegin, resultBegin + copyLen, static_cast<int>(result.size()), "result");
+    int n = data.numFrames();
+    std::vector<float> coeffs(n);
 
-    std::copy(data.begin() + dataBegin, data.begin() + dataEnd,
-              result.begin() + resultBegin);
+    if (windowType == "hann") {
+        generateHannWindow(coeffs);
+    } else if (windowType == "hamming") {
+        generateHammingWindow(coeffs);
+    } else {
+        throw std::invalid_argument("Unknown window type: " + windowType);
+    }
+
+    applyWindow(data, coeffs);
 }
 
-int FIFO::getFilledSize() const {
-    return writeIdx < size ? static_cast<int>(writeIdx) : size;
-}
+// ─── CircularFIFO ───────────────────────────────────────────────────────────
 
-// CircularFIFO
 CircularFIFO::CircularFIFO(int size, const std::string& channelName)
-    : FIFO(size, channelName) {}
+    : size(size), mask(size - 1), channelName(channelName), storage(size) {}
 
 void CircularFIFO::addSample(float sample) {
-    data[writeIdx & mask] = sample;
+    storage.at(writeIdx) = sample;
     writeIdx++;
 }
 
 void CircularFIFO::addChunk(std::span<const float> chunk) {
-    int nSamples = static_cast<int>(chunk.size());
-
-    if (nSamples > size) {
+    int n = static_cast<int>(chunk.size());
+    if (n > size) {
         throw std::invalid_argument(
-            "Chunk size (" + std::to_string(nSamples) +
-            ") is larger than buffer size (" + std::to_string(size) +
-            ". This could lead to data loss. Split chunk into multiple chunks)");
+            "Chunk size (" + std::to_string(n) +
+            ") is larger than buffer size (" + std::to_string(size) + ")");
     }
-
-    int w = static_cast<int>(writeIdx & mask);
-    int end = w + nSamples;
-    if (end <= size) {
-        writeDataByRange(chunk, 0, nSamples, w);
-    } else {
-        int first = size - w;
-        writeDataByRange(chunk, 0, first, w);
-        writeDataByRange(chunk, first, nSamples, 0);
-    }
-
-    writeIdx += nSamples;
+    storage.writeChunk(chunk, writeIdx);
+    writeIdx += n;
 }
 
-void CircularFIFO::readNSamples(std::span<float> out) {
+void CircularFIFO::readNSamples(std::span<float> out) const {
     int n = static_cast<int>(out.size());
     if (n > size) n = size;
-
-    int w = static_cast<int>(writeIdx & mask);
-    int start = (w - n + size) & mask;
-
-    if (start + n <= size) {
-        readDataByRange(out, start, start + n, 0);
-    } else {
-        int tail = size - start;
-        readDataByRange(out, start, size, 0);
-        readDataByRange(out, 0, n - tail, tail);
-    }
+    int64_t startIdx = writeIdx - n;
+    if (startIdx < 0) startIdx = 0;
+    int actual = static_cast<int>(writeIdx - startIdx);
+    storage.readChunk(out.first(actual), startIdx);
 }
 
-void CircularFIFO::readAll(std::span<float> out) {
+void CircularFIFO::readAll(std::span<float> out) const {
     if (static_cast<int>(out.size()) < size) {
         throw std::invalid_argument("readAll output buffer too small");
     }
-    int w = static_cast<int>(writeIdx & mask);
-    int tail = size - w;
-    readDataByRange(out, w, size, 0);
-    readDataByRange(out, 0, w, tail);
+    int filled = getFilledSize();
+    int64_t startIdx = writeIdx - filled;
+    storage.readChunk(out.first(filled), startIdx);
 }
 
-// MirrorCircularFIFO — `size` is the logical capacity. The underlying `data`
-// vector is sized to 2*size so the n most-recent samples are always contiguous.
-MirrorCircularFIFO::MirrorCircularFIFO(int size, const std::string& channelName)
-    : FIFO(size, channelName) {
-    data.assign(static_cast<size_t>(size) * 2, 0.f);
+int CircularFIFO::getFilledSize() const {
+    return writeIdx < size ? static_cast<int>(writeIdx) : size;
 }
+
+// ─── MirrorCircularFIFO ─────────────────────────────────────────────────────
+
+MirrorCircularFIFO::MirrorCircularFIFO(int size, const std::string& channelName)
+    : size(size), mask(size - 1), channelName(channelName), storage(size) {}
 
 void MirrorCircularFIFO::addSample(float sample) {
-    int w = static_cast<int>(writeIdx & mask);
-    data[w] = sample;
-    data[w + size] = sample;
+    storage.write(writeIdx, sample);
     writeIdx++;
 }
 
 void MirrorCircularFIFO::addChunk(std::span<const float> chunk) {
-    int nSamples = static_cast<int>(chunk.size());
-
-    if (nSamples > size) {
+    int n = static_cast<int>(chunk.size());
+    if (n > size) {
         throw std::invalid_argument(
-            "Chunk size (" + std::to_string(nSamples) +
-            ") is larger than buffer size (" + std::to_string(size) +
-            ". This could lead to data loss. Split chunk into multiple chunks)");
+            "Chunk size (" + std::to_string(n) +
+            ") is larger than buffer size (" + std::to_string(size) + ")");
     }
-
-    int w = static_cast<int>(writeIdx & mask);
-    int end = w + nSamples;
-    if (end <= size) {
-        writeDataByRange(chunk, 0, nSamples, w);
-        writeDataByRange(chunk, 0, nSamples, w + size);
-    } else {
-        int first = size - w;
-        writeDataByRange(chunk, 0, first, w);
-        writeDataByRange(chunk, 0, first, w + size);
-        writeDataByRange(chunk, first, nSamples, 0);
-        writeDataByRange(chunk, first, nSamples, size);
-    }
-
-    writeIdx += nSamples;
+    storage.writeChunk(chunk, writeIdx);
+    writeIdx += n;
 }
 
-std::span<const float> MirrorCircularFIFO::peekNSamples(int n) const {
-    if (n > size) n = size;
-    int w = static_cast<int>(writeIdx & mask);
-    int start = w + size - n;
-    return std::span<const float>(data.data() + start, static_cast<size_t>(n));
-}
-
-void MirrorCircularFIFO::readNSamples(std::span<float> out) {
-    int n = static_cast<int>(out.size());
-    auto src = peekNSamples(n);
+void MirrorCircularFIFO::readNSamples(std::span<float> out) const {
+    auto src = peekNSamples(static_cast<int>(out.size()));
     std::copy(src.begin(), src.end(), out.begin());
 }
 
-void MirrorCircularFIFO::readAll(std::span<float> out) {
+void MirrorCircularFIFO::readAll(std::span<float> out) const {
     if (static_cast<int>(out.size()) < size) {
         throw std::invalid_argument("readAll output buffer too small");
     }
-    int w = static_cast<int>(writeIdx & mask);
-    readDataByRange(out, w, w + size, 0);
+    auto src = peekNSamples(getFilledSize());
+    std::copy(src.begin(), src.end(), out.begin());
+}
+
+std::span<const float> MirrorCircularFIFO::peekNSamples(int n) const {
+    return storage.peek(writeIdx, n);
+}
+
+int MirrorCircularFIFO::getFilledSize() const {
+    return writeIdx < size ? static_cast<int>(writeIdx) : size;
+}
+
+// ─── CircularFIFOTS (thread-safe SPSC) ──────────────────────────────────────
+
+CircularFIFOTS::CircularFIFOTS(int size, const std::string& channelName)
+    : size(size), mask(size - 1), channelName(channelName), storage(size) {}
+
+void CircularFIFOTS::addSample(float sample) {
+    int64_t w = writeIdx.load(std::memory_order_relaxed);
+    storage.at(w) = sample;
+    writeIdx.store(w + 1, std::memory_order_release);
+}
+
+void CircularFIFOTS::addChunk(std::span<const float> chunk) {
+    int n = static_cast<int>(chunk.size());
+    if (n > size) {
+        throw std::invalid_argument(
+            "Chunk size (" + std::to_string(n) +
+            ") is larger than buffer size (" + std::to_string(size) + ")");
+    }
+    int64_t w = writeIdx.load(std::memory_order_relaxed);
+    storage.writeChunk(chunk, w);
+    writeIdx.store(w + n, std::memory_order_release);
+}
+
+void CircularFIFOTS::readNSamples(std::span<float> out) const {
+    int64_t w = writeIdx.load(std::memory_order_acquire);
+    int n = static_cast<int>(out.size());
+    if (n > size) n = size;
+    int64_t startIdx = w - n;
+    if (startIdx < 0) startIdx = 0;
+    int actual = static_cast<int>(w - startIdx);
+    storage.readChunk(out.first(actual), startIdx);
+}
+
+void CircularFIFOTS::readAll(std::span<float> out) const {
+    if (static_cast<int>(out.size()) < size) {
+        throw std::invalid_argument("readAll output buffer too small");
+    }
+    int64_t w = writeIdx.load(std::memory_order_acquire);
+    int filled = getFilledSize();
+    int64_t startIdx = w - filled;
+    storage.readChunk(out.first(filled), startIdx);
+}
+
+int CircularFIFOTS::getFilledSize() const {
+    int64_t w = writeIdx.load(std::memory_order_acquire);
+    return w < size ? static_cast<int>(w) : size;
+}
+
+// ─── MirrorCircularFIFOTS (thread-safe SPSC) ────────────────────────────────
+
+MirrorCircularFIFOTS::MirrorCircularFIFOTS(int size, const std::string& channelName)
+    : size(size), mask(size - 1), channelName(channelName), storage(size) {}
+
+void MirrorCircularFIFOTS::addSample(float sample) {
+    int64_t w = writeIdx.load(std::memory_order_relaxed);
+    storage.write(w, sample);
+    writeIdx.store(w + 1, std::memory_order_release);
+}
+
+void MirrorCircularFIFOTS::addChunk(std::span<const float> chunk) {
+    int n = static_cast<int>(chunk.size());
+    if (n > size) {
+        throw std::invalid_argument(
+            "Chunk size (" + std::to_string(n) +
+            ") is larger than buffer size (" + std::to_string(size) + ")");
+    }
+    int64_t w = writeIdx.load(std::memory_order_relaxed);
+    storage.writeChunk(chunk, w);
+    writeIdx.store(w + n, std::memory_order_release);
+}
+
+void MirrorCircularFIFOTS::readNSamples(std::span<float> out) const {
+    auto src = peekNSamples(static_cast<int>(out.size()));
+    std::copy(src.begin(), src.end(), out.begin());
+}
+
+void MirrorCircularFIFOTS::readAll(std::span<float> out) const {
+    if (static_cast<int>(out.size()) < size) {
+        throw std::invalid_argument("readAll output buffer too small");
+    }
+    auto src = peekNSamples(getFilledSize());
+    std::copy(src.begin(), src.end(), out.begin());
+}
+
+std::span<const float> MirrorCircularFIFOTS::peekNSamples(int n) const {
+    int64_t w = writeIdx.load(std::memory_order_acquire);
+    return storage.peek(w, n);
+}
+
+int MirrorCircularFIFOTS::getFilledSize() const {
+    int64_t w = writeIdx.load(std::memory_order_acquire);
+    return w < size ? static_cast<int>(w) : size;
 }

@@ -1,6 +1,6 @@
 #include "audio_writer.h"
 
-AudioWriter::AudioWriter(int sampleRate, ma_format format, MultiSignalFIFO<MirrorCircularFIFO>* fifo) {
+AudioWriter::AudioWriter(int sampleRate, ma_format format, MultiSignal<MirrorCircularFIFO>* fifo) {
     config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = format;
     config.playback.channels = fifo->nChannels;
@@ -16,6 +16,6 @@ AudioWriter::~AudioWriter() {
 }
 
 void AudioWriter::dataCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma_uint32 frameCount) {
-    auto* fifo = static_cast<MultiSignalFIFO<MirrorCircularFIFO>*>(pDevice->pUserData);
+    auto* fifo = static_cast<MultiSignal<MirrorCircularFIFO>*>(pDevice->pUserData);
     fifo->readNSamplesInterleaved(static_cast<float*>(pOutput), static_cast<int>(frameCount));
 }

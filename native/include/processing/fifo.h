@@ -6,87 +6,126 @@
 #include <stdexcept>
 #include <cstring>
 #include <cstdint>
+#include <atomic>
+#include "ring_storage.h"
 #include "channel_array.h"
-
-bool isPowerOfTwo(int n);
 
 int secondsToSamples(float seconds, int sampleRate);
 
 float samplesToSeconds(int samples, int sampleRate);
 
+void applyWindow(const ChannelArrayView& data, std::span<const float> coeffs);
 void applyWindow(const ChannelArrayView& data, const std::string& windowType);
 
-// Single-channel FIFO base class. `size` must be a power of two so the
-// monotonic writeIdx can be masked into a physical index with (& mask).
-class FIFO {
+void generateHannWindow(std::span<float> out);
+void generateHammingWindow(std::span<float> out);
+
+// ─── Non-thread-safe FIFOs (intra-thread use) ───────────────────────────────
+
+class CircularFIFO {
 public:
     int size;
     int mask;
     std::string channelName;
 
-    FIFO(int size, const std::string& channelName = "");
-    virtual ~FIFO() = default;
+    CircularFIFO(int size, const std::string& channelName = "");
 
-    virtual void addSample(float sample) = 0;
-    virtual void addChunk(std::span<const float> chunk) = 0;
-
-    // Fills out.size() samples (the most-recent ones). Unwritten slots read as 0.
-    virtual void readNSamples(std::span<float> out) = 0;
-    // Fills size samples. Unwritten slots read as 0. out.size() must be >= size.
-    virtual void readAll(std::span<float> out) = 0;
+    void addSample(float sample);
+    void addChunk(std::span<const float> chunk);
+    void readNSamples(std::span<float> out) const;
+    void readAll(std::span<float> out) const;
 
     int getFilledSize() const;
     int64_t getTotalWritten() const { return writeIdx; }
 
 protected:
-    std::vector<float> data;
-    int64_t writeIdx;  // monotonic count of samples ever written
-
-    static void validateRange(int begin, int end, int maxSize, const std::string& name);
-    void writeDataByRange(std::span<const float> source,
-                          int sourceBegin = 0, int sourceEnd = -1, int dataBegin = 0);
-    void readDataByRange(std::span<float> result,
-                         int dataBegin = 0, int dataEnd = -1, int resultBegin = 0) const;
+    RingStorage storage;
+    int64_t writeIdx = 0;
 };
 
-class CircularFIFO : public FIFO {
+class MirrorCircularFIFO {
 public:
-    CircularFIFO(int size, const std::string& channelName = "");
+    int size;
+    int mask;
+    std::string channelName;
 
-    void addSample(float sample) override;
-    void addChunk(std::span<const float> chunk) override;
-    void readNSamples(std::span<float> out) override;
-    void readAll(std::span<float> out) override;
-};
-
-// Circular FIFO with a duplicated mirror of the data stored immediately after
-// the primary region. `size` is the logical capacity (same semantics as
-// CircularFIFO); the underlying storage is 2*size so the n most-recent
-// samples are always contiguous in memory.
-class MirrorCircularFIFO : public FIFO {
-public:
     MirrorCircularFIFO(int size, const std::string& channelName = "");
 
-    void addSample(float sample) override;
-    void addChunk(std::span<const float> chunk) override;
-    void readNSamples(std::span<float> out) override;
-    void readAll(std::span<float> out) override;
+    void addSample(float sample);
+    void addChunk(std::span<const float> chunk);
+    void readNSamples(std::span<float> out) const;
+    void readAll(std::span<float> out) const;
 
-    // Zero-copy view into the internal mirror buffer for the n most-recent samples.
-    // Valid until the next write to this FIFO.
     std::span<const float> peekNSamples(int n) const;
+
+    int getFilledSize() const;
+    int64_t getTotalWritten() const { return writeIdx; }
+
+protected:
+    MirrorRingStorage storage;
+    int64_t writeIdx = 0;
 };
 
-// Multi-signal buffer that manages per-channel FIFOs.
+// ─── Thread-safe SPSC FIFOs (cross-thread use) ─────────────────────────────
+//
+// Safe for exactly ONE writer thread and ONE reader thread with no mutex.
+// writeIdx uses memory_order_release on store and memory_order_acquire on load.
+
+class CircularFIFOTS {
+public:
+    int size;
+    int mask;
+    std::string channelName;
+
+    CircularFIFOTS(int size, const std::string& channelName = "");
+
+    void addSample(float sample);
+    void addChunk(std::span<const float> chunk);
+    void readNSamples(std::span<float> out) const;
+    void readAll(std::span<float> out) const;
+
+    int getFilledSize() const;
+    int64_t getTotalWritten() const { return writeIdx.load(std::memory_order_acquire); }
+
+protected:
+    RingStorage storage;
+    std::atomic<int64_t> writeIdx{0};
+};
+
+class MirrorCircularFIFOTS {
+public:
+    int size;
+    int mask;
+    std::string channelName;
+
+    MirrorCircularFIFOTS(int size, const std::string& channelName = "");
+
+    void addSample(float sample);
+    void addChunk(std::span<const float> chunk);
+    void readNSamples(std::span<float> out) const;
+    void readAll(std::span<float> out) const;
+
+    std::span<const float> peekNSamples(int n) const;
+
+    int getFilledSize() const;
+    int64_t getTotalWritten() const { return writeIdx.load(std::memory_order_acquire); }
+
+protected:
+    MirrorRingStorage storage;
+    std::atomic<int64_t> writeIdx{0};
+};
+
+// ─── MultiSignal: per-channel container ─────────────────────────────────────
+
 template<typename T>
-class MultiSignalFIFO {
+class MultiSignal {
 public:
     int nChannels;
     int size;
     float timestamp;
 
-    MultiSignalFIFO(int size, int nChannels,
-                    const std::vector<std::string>& channelNames = {})
+    MultiSignal(int size, int nChannels,
+                const std::vector<std::string>& channelNames = {})
         : nChannels(nChannels), size(size), timestamp(0.f), cachedNames(nChannels) {
         channels.reserve(nChannels);
         for (int i = 0; i < nChannels; i++) {
@@ -96,9 +135,9 @@ public:
         }
     }
 
-    MultiSignalFIFO(float seconds, int sampleRate, int nChannels,
-                    const std::vector<std::string>& channelNames = {})
-        : MultiSignalFIFO(secondsToSamples(seconds, sampleRate), nChannels, channelNames) {}
+    MultiSignal(float seconds, int sampleRate, int nChannels,
+                const std::vector<std::string>& channelNames = {})
+        : MultiSignal(secondsToSamples(seconds, sampleRate), nChannels, channelNames) {}
 
     void addSample(std::span<const float> sample) {
         if (static_cast<int>(sample.size()) != nChannels) {
@@ -122,9 +161,7 @@ public:
         }
     }
 
-    // Reads n frames from each channel into the matching channel of `out`.
-    // Zero-allocation hot path.
-    void readNSamples(const ChannelArrayView& out, int n) {
+    void readNSamples(const ChannelArrayView& out, int n) const {
         if (out.numChannels() != nChannels) {
             throw std::invalid_argument(
                 "Output channel count (" + std::to_string(out.numChannels()) +
@@ -135,8 +172,7 @@ public:
         }
     }
 
-    // Reads all size samples per channel into `out`. Unwritten slots are 0.
-    void readAll(const ChannelArrayView& out) {
+    void readAll(const ChannelArrayView& out) const {
         if (out.numChannels() != nChannels) {
             throw std::invalid_argument("Output channel count mismatch");
         }
@@ -145,20 +181,17 @@ public:
         }
     }
 
-    // Hot path for the audio callback. Writes the n most-recent frames per
-    // channel into a miniaudio-style interleaved buffer of length frames*nChannels.
-    // Zero allocations.
-    void readNSamplesInterleaved(float* interleavedOut, int frames) {
+    void readNSamplesInterleaved(float* interleavedOut, int frames) const {
         int n = frames > size ? size : frames;
         int pad = frames - n;
         for (int ch = 0; ch < nChannels; ch++) {
-            T& fifo = channels[ch];
+            const T& fifo = channels[ch];
 
             for (int i = 0; i < pad; i++) {
                 interleavedOut[i * nChannels + ch] = 0.f;
             }
 
-            if constexpr (std::is_same_v<T, MirrorCircularFIFO>) {
+            if constexpr (requires { fifo.peekNSamples(n); }) {
                 std::span<const float> src = fifo.peekNSamples(n);
                 for (int i = 0; i < n; i++) {
                     interleavedOut[(pad + i) * nChannels + ch] = src[i];
@@ -181,6 +214,7 @@ public:
     }
 
     T& getChannel(int ch) { return channels[ch]; }
+    const T& getChannel(int ch) const { return channels[ch]; }
 
     T& getChannel(const std::string& name) {
         for (auto& ch : channels) {
@@ -196,44 +230,46 @@ private:
     std::vector<std::string> cachedNames;
 };
 
-// block processor
+// ─── SampleCounter ──────────────────────────────────────────────────────────
 
 class SampleCounter {
 public:
     int count;
     int resetThresh;
 
-    SampleCounter(int count=0, int resetThresh=-1) : count(count), resetThresh(resetThresh)
-    {
+    SampleCounter(int count = 0, int resetThresh = -1)
+        : count(count), resetThresh(resetThresh) {
         if (resetThresh == 0 || resetThresh < -1) {
-            throw std::invalid_argument("resetThesh must be a positive number or -1 (indicates no reset threshold) " + std::to_string(resetThresh));
+            throw std::invalid_argument(
+                "resetThresh must be a positive number or -1 (indicates no reset threshold) "
+                + std::to_string(resetThresh));
         }
     }
-    
-    void resetCount() {
-        count = 0;
-    }
+
+    void resetCount() { count = 0; }
 
     bool incrementByN(int n = 1) {
         int temp = count + n;
         if (temp >= resetThresh && resetThresh != -1) {
             count = temp % resetThresh;
             return true;
-        } 
-
+        }
         count = temp;
         return false;
     }
 };
 
+// ─── BlockReader ────────────────────────────────────────────────────────────
 
-// need to add overlapping blocks and overlapping add support and figure out how to write. Read block -> process -> add overlapping -> write to out buffer
 template<typename T>
 class BlockReader {
 public:
     BlockReader() = default;
-    BlockReader(MultiSignalFIFO<T>* fifo, int blockSize, int hopSize) : fifo(fifo), blockSize(blockSize), hopSize(hopSize), counter(0, hopSize) {};
 
+    BlockReader(MultiSignal<T>* fifo, int blockSize, int hopSize)
+        : fifo(fifo), blockSize(blockSize), hopSize(hopSize),
+          counter(0, hopSize),
+          lastSeenTotal(fifo->getChannel(0).getTotalWritten()) {}
 
     bool poll() {
         int64_t total = fifo->getChannel(0).getTotalWritten();
@@ -243,19 +279,18 @@ public:
     }
 
     void readBlock(const ChannelArrayView& out,
-                   const std::string& windowType = "rectangular") {
+                   std::span<const float> windowCoeffs) {
         fifo->readNSamples(out, blockSize);
-        applyWindow(out, windowType)
+        applyWindow(out, windowCoeffs);
     }
-
 
     int getBlockSize() const { return blockSize; }
     int getHopSize()   const { return hopSize; }
 
 private:
-    MultiSignalFIFO<T>* fifo = nullptr;
+    MultiSignal<T>* fifo = nullptr;
     int blockSize = 0;
     int hopSize = 0;
     SampleCounter counter;
-    int lastSeenFilled = 0;
+    int64_t lastSeenTotal = 0;
 };

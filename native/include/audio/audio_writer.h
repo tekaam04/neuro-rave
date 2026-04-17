@@ -5,7 +5,7 @@
 
 class AudioWriter {
 public:
-    AudioWriter(int sampleRate, ma_format format, MultiSignalFIFO<MirrorCircularFIFO>* fifo);
+    AudioWriter(int sampleRate, ma_format format, MultiSignal<MirrorCircularFIFO>* fifo);
     ~AudioWriter();
 
     void play()  { ma_device_start(&device); }

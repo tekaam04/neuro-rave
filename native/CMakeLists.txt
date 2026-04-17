@@ -132,7 +132,8 @@ add_executable(neuro_rave
     src/audio/miniaudio.c
     src/processing/fifo.cpp
     src/processing/filter.cpp
-    src/processing/signal_gen.cpp)
+    src/processing/signal_gen.cpp
+    src/processing/fft.cpp)
 
 target_include_directories(neuro_rave PRIVATE include include/streaming include/processing include/audio)
 target_compile_definitions(neuro_rave PRIVATE NEURO_RAVE_LIB)
