@@ -14,7 +14,7 @@
 int main(int argc, char* argv[]) {
     NeuroRaveConfig config = config_load("config/constants.json");
 
-    MultiSignalFIFO<MirrorCircularFIFO> rawFIFO(config.window_size, config.n_channels);
+    MultiSignal<MirrorCircularFIFO> rawFIFO(config.window_size, config.n_channels);
     AudioWriter audioWriter(config.sample_rate, ma_format_f32, &rawFIFO);
 
     // Pre-allocated planar scratch shared by both branches: simulate fills it

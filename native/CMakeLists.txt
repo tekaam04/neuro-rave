@@ -78,6 +78,10 @@ else()
     set(LWS_TARGET _lws)
 endif()
 
+# ── dsp-lib (submodule) ───────────────────────────────────────────────────────
+
+add_subdirectory(dsp-lib)
+
 # ── Shared config source ──────────────────────────────────────────────────────
 
 set(CONFIG_SRC src/streaming/config.c)
@@ -127,29 +131,11 @@ add_executable(neuro_rave
     ${CONFIG_SRC}
     main.cpp
     src/streaming/lsl_bridge.cpp
-    src/streaming/ws_server.cpp
-    src/audio/audio_writer.cpp
-    src/audio/miniaudio.c
-    src/processing/fifo.cpp
-    src/processing/filter.cpp
-    src/processing/signal_gen.cpp)
+    src/streaming/ws_server.cpp)
 
-target_include_directories(neuro_rave PRIVATE include include/streaming include/processing include/audio)
+target_include_directories(neuro_rave PRIVATE include include/streaming)
 target_compile_definitions(neuro_rave PRIVATE NEURO_RAVE_LIB)
-target_link_libraries(neuro_rave PRIVATE ${LSL_TARGET} ${LWS_TARGET})
-
-# Audio backend deps for miniaudio (Linux only — Mac uses CoreAudio automatically)
-if(UNIX AND NOT APPLE)
-    find_package(Threads REQUIRED)
-    target_link_libraries(neuro_rave PRIVATE Threads::Threads dl m)
-endif()
-if(APPLE)
-    target_link_libraries(neuro_rave PRIVATE
-        "-framework CoreAudio"
-        "-framework CoreFoundation"
-        "-framework AudioUnit"
-        "-framework AudioToolbox")
-endif()
+target_link_libraries(neuro_rave PRIVATE dsp_lib ${LSL_TARGET} ${LWS_TARGET})
 
 # ── Installation ──────────────────────────────────────────────────────────────
 

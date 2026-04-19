@@ -1,0 +1,3 @@
+[submodule "native/dsp-lib"]
+	path = native/dsp-lib
+	url = /Users/zrentala/Documents/dsp-lib
