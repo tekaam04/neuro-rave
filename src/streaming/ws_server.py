@@ -88,12 +88,22 @@ class EEGWebSocketServer:
         self.app.include_router(spotify_router)
         # --- END agent-added ---
         self.app.add_api_websocket_route("/ws", self._ws_endpoint)
+        self.app.post("/features")(self._receive_features) # AAB. Added
 
     # ── Lifespan ───────────────────────────────────────────────────────────────
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncGenerator[None, None]:
         """Start all broadcast loops on app startup; cancel them on shutdown."""
+        tasks = []
+
+        if not const.SIMULATE:
+            tasks.extend([
+                asyncio.create_task(self._raw_loop()),
+                asyncio.create_task(self._features_loop()),
+            ])
+        else:
+            logger.info("SIMULATE=true — skipping LSL raw/features loops; using /features POST input.")
         self._loop = asyncio.get_running_loop()
         tasks = []
         if self.use_internal_lsl_source:
@@ -131,6 +141,31 @@ class EEGWebSocketServer:
             except Exception:
                 dead.add(ws)
         self._clients.difference_update(dead)
+    
+    async def _receive_features(self, payload: dict) -> dict: # AAB. Added to integrate main features duing simulation
+        """Receive externally computed features and broadcast them to WebSocket clients."""
+        packet = FeaturesPacket(
+            timestamp=float(payload.get("timestamp", 0.0)),
+            energy=float(payload["energy"]),
+            focus=float(payload["focus"]),
+            mood=str(payload.get("mood", "unknown")),
+            theta_beta_ratio=float(payload.get("theta_beta_ratio", 0.0)),
+            alpha_suppression=float(payload.get("alpha_suppression", 0.0)),
+            sustained_attention_index=float(payload.get("sustained_attention_index", 0.0)),
+            energy_index=float(payload.get("energy_index", 0.0)),
+            is_attentive=bool(payload.get("is_attentive", False)),
+            sustained_streak_sec=float(payload.get("sustained_streak_sec", 0.0)),
+        )
+
+        await self._broadcast(packet.to_json())
+        logger.info(
+            "external features broadcast: source=%s mood=%s energy=%.2f focus=%.2f",
+            str(payload.get("source", "unknown")),
+            packet.mood,
+            packet.energy,
+            packet.focus,
+        )
+        return {"ok": True}
 
     # ── Broadcast loops ────────────────────────────────────────────────────────
 

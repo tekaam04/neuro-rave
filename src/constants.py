@@ -75,10 +75,10 @@ MOOD_DISTRACT_HYPE_F_MAX: float = float(_config.get("MOOD_DISTRACT_HYPE_F_MAX", 
 MOOD_D_ENERGY_SCALE: float = float(_config.get("MOOD_D_ENERGY_SCALE", 0.85))
 
 ### Attention features (alpha-suppression sustained streak + rolling variability)
-ATTENTION_ALPHA_SUP_THRESHOLD: float = float(_config.get("ATTENTION_ALPHA_SUP_THRESHOLD", 0.5))
-ATTENTION_SUSTAINED_SEC:       float = float(_config.get("ATTENTION_SUSTAINED_SEC", 10.0))
+ATTENTION_ALPHA_SUP_THRESHOLD: float = float(_config.get("ATTENTION_ALPHA_SUP_THRESHOLD", 0.3))
+ATTENTION_SUSTAINED_SEC:       float = float(_config.get("ATTENTION_SUSTAINED_SEC", 7.0))
 ATTENTION_VARIABILITY_SEC:     float = float(_config.get("ATTENTION_VARIABILITY_SEC", 60.0))
-ATTENTION_VARIABILITY_MAX:     float = float(_config.get("ATTENTION_VARIABILITY_MAX", 0.25))
+ATTENTION_VARIABILITY_MAX:     float = float(_config.get("ATTENTION_VARIABILITY_MAX", 0.5))
 # Blend weights: portion of attention-derived index to mix into final energy/focus.
 ENERGY_ATTENTION_BLEND:        float = float(_config.get("ENERGY_ATTENTION_BLEND", 0.3))
 FOCUS_ATTENTION_BLEND:         float = float(_config.get("FOCUS_ATTENTION_BLEND", 0.4))
